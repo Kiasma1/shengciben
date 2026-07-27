@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { OllamaStatus, WordSense } from '../shared/types'
+import type { AiEnrichment, OllamaStatus } from '../shared/types'
 
 const enrichmentSchema = z.object({
   ipaUk: z.string().min(1).max(80),
@@ -7,13 +7,6 @@ const enrichmentSchema = z.object({
   suggestedCategory: z.string().max(60).nullable(),
   suggestedTags: z.array(z.string().min(1).max(30)).max(6)
 })
-
-export type AiEnrichment = {
-  ipaUk: string
-  senses: WordSense[]
-  suggestedCategory: string | null
-  tagNames: string[]
-}
 
 const endpoint = (url: string, path: string): string => `${url.replace(/\/$/, '')}${path}`
 

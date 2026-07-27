@@ -9,6 +9,8 @@ import {
   FileDown,
   FolderPlus,
   LoaderCircle,
+  Pause,
+  Play,
   Plus,
   RefreshCw,
   Search,
@@ -22,8 +24,11 @@ import type {
   AppSettings,
   Category,
   EnrichmentStatus,
+  ExportFormat,
   OllamaStatus,
+  QueueStatus,
   RootIndexStatus,
+  WordCreateResult,
   WordDraft,
   WordEntry,
   WordSense
@@ -66,6 +71,7 @@ export default function App(): ReactElement {
   const [addOpen, setAddOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [toast, setToast] = useState<Toast>(null)
+  const [queueStatus, setQueueStatus] = useState<QueueStatus>({ pending: 0, processing: 0, failed: 0, paused: false })
 
   const filters = useMemo(
     () => ({
@@ -82,9 +88,14 @@ export default function App(): ReactElement {
 
   const load = async (): Promise<void> => {
     try {
-      const [nextEntries, nextCategories] = await Promise.all([window.api.words.list(filters), window.api.categories.list()])
+      const [nextEntries, nextCategories, nextQueueStatus] = await Promise.all([
+        window.api.words.list(filters),
+        window.api.categories.list(),
+        window.api.queue.status()
+      ])
       setEntries(nextEntries)
       setCategories(nextCategories)
+      setQueueStatus(nextQueueStatus)
       setSelectedId((current) => (current && nextEntries.some((entry) => entry.id === current) ? current : nextEntries[0]?.id ?? null))
     } catch (error) {
       showToast('error', messageOf(error))
@@ -125,6 +136,14 @@ export default function App(): ReactElement {
       await window.api.categories.delete(category.id)
       if (selectedCategoryId === category.id) setSelectedCategoryId(null)
       showToast('success', '分类已删除。')
+    } catch (error) {
+      showToast('error', messageOf(error))
+    }
+  }
+
+  const toggleQueue = async (): Promise<void> => {
+    try {
+      setQueueStatus(await window.api.queue.setPaused(!queueStatus.paused))
     } catch (error) {
       showToast('error', messageOf(error))
     }
@@ -195,9 +214,25 @@ export default function App(): ReactElement {
             <p className="eyebrow">个人词库</p>
             <h1>{selected ? selected.word : '生词本'}</h1>
           </div>
-          <button className="primary-button" onClick={() => setAddOpen(true)}>
-            <Plus size={18} /> 添加单词
-          </button>
+          <div className="header-actions">
+            <div className={`queue-control ${queueStatus.paused ? 'paused' : ''}`}>
+              <span>
+                {queueStatus.paused
+                  ? `AI 已暂停 · ${queueStatus.pending} 项待处理`
+                  : queueStatus.processing
+                    ? `AI 处理中 · ${queueStatus.pending} 项等待`
+                    : queueStatus.pending
+                      ? `${queueStatus.pending} 项等待 AI`
+                      : 'AI 队列空闲'}
+              </span>
+              <button className="icon-button compact" onClick={() => void toggleQueue()} aria-label={queueStatus.paused ? '继续 AI 队列' : '暂停 AI 队列'}>
+                {queueStatus.paused ? <Play size={14} /> : <Pause size={14} />}
+              </button>
+            </div>
+            <button className="primary-button" onClick={() => setAddOpen(true)}>
+              <Plus size={18} /> 添加单词
+            </button>
+          </div>
         </header>
         <div className="detail-scroll">
           {selected ? (
@@ -214,7 +249,18 @@ export default function App(): ReactElement {
         </div>
       </section>
 
-      {addOpen && <AddWordDialog onClose={() => setAddOpen(false)} onCreated={(id) => { setSelectedId(id); setAddOpen(false); void load() }} onToast={showToast} />}
+      {addOpen && <AddWordDialog
+        onClose={() => setAddOpen(false)}
+        onCreated={(result) => {
+          setQuery('')
+          setSelectedCategoryId(null)
+          setStatusFilter('all')
+          setCollectionView(result.entry.isDeleted ? 'trash' : 'active')
+          setSelectedId(result.entry.id)
+          setAddOpen(false)
+        }}
+        onToast={showToast}
+      />}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} onToast={showToast} />}
       {toast && <div className={`toast ${toast.kind}`} role="status">{toast.kind === 'error' ? <CircleAlert size={18} /> : <Check size={18} />}{toast.message}</div>}
     </main>
@@ -290,14 +336,27 @@ function StatusBadge({ status }: { status: EnrichmentStatus }): ReactElement {
 
 function WordDetail({ entry, categories, isTrash, onChanged, onToast }: { entry: WordEntry; categories: Category[]; isTrash: boolean; onChanged: () => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
   const [draft, setDraft] = useState<WordDraft>(() => asDraft(entry))
+  const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => setDraft(asDraft(entry)), [entry])
+  useEffect(() => {
+    if (draft.id !== entry.id || !dirty) {
+      setDraft(asDraft(entry))
+      if (draft.id !== entry.id) setDirty(false)
+    }
+  }, [entry])
+
+  const editDraft = (nextDraft: WordDraft): void => {
+    setDraft(nextDraft)
+    setDirty(true)
+  }
 
   const save = async (): Promise<void> => {
     setSaving(true)
     try {
-      await window.api.words.save(draft)
+      const saved = await window.api.words.save(draft)
+      setDraft(asDraft(saved))
+      setDirty(false)
       onToast('success', '单词已保存。')
       onChanged()
     } catch (error) {
@@ -330,7 +389,9 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast }: { entry:
     if (!entry.suggestedCategory) return
     try {
       const category = await window.api.categories.create(entry.suggestedCategory, CATEGORY_COLORS[categories.length % CATEGORY_COLORS.length])
-      await window.api.words.save({ ...draft, categoryId: category.id })
+      const saved = await window.api.words.save({ ...draft, categoryId: category.id })
+      setDraft(asDraft(saved))
+      setDirty(false)
       onToast('success', `已创建并应用分类「${category.name}」。`)
       onChanged()
     } catch (error) {
@@ -355,18 +416,18 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast }: { entry:
       {entry.aiError && <div className="inline-alert"><CircleAlert size={17} /><span>{entry.aiError}</span><button onClick={() => void retry()}><RefreshCw size={14} />重试</button></div>}
 
       <section className="form-section word-heading-section">
-        <label>单词<input value={draft.word} onChange={(event) => setDraft({ ...draft, word: event.target.value })} /></label>
-        <label>英式 IPA<input value={draft.ipaUk} onChange={(event) => setDraft({ ...draft, ipaUk: event.target.value })} placeholder="例如 ˈvɒkəbjəlri" /></label>
+        <label>单词<input value={draft.word} onChange={(event) => editDraft({ ...draft, word: event.target.value })} /></label>
+        <label>英式 IPA<input value={draft.ipaUk} onChange={(event) => editDraft({ ...draft, ipaUk: event.target.value })} placeholder="例如 ˈvɒkəbjəlri" /></label>
       </section>
 
       <section className="form-section">
-        <div className="section-title"><div><p className="eyebrow">词义</p><h2>词性与中文释义</h2></div><button className="outline-button" onClick={() => setDraft({ ...draft, senses: [...draft.senses, blankSense()] })}><Plus size={15} />添加义项</button></div>
+        <div className="section-title"><div><p className="eyebrow">词义</p><h2>词性与中文释义</h2></div><button className="outline-button" onClick={() => editDraft({ ...draft, senses: [...draft.senses, blankSense()] })}><Plus size={15} />添加义项</button></div>
         <div className="sense-stack">
           {draft.senses.map((sense, index) => (
             <div className="sense-row" key={`${entry.id}-${index}`}>
-              <input value={sense.partOfSpeech} onChange={(event) => setDraft({ ...draft, senses: replaceSense(draft.senses, index, { ...sense, partOfSpeech: event.target.value }) })} placeholder="词性，如 noun" aria-label="词性" />
-              <input value={sense.definitionZh} onChange={(event) => setDraft({ ...draft, senses: replaceSense(draft.senses, index, { ...sense, definitionZh: event.target.value }) })} placeholder="中文释义" aria-label="中文释义" />
-              <button className="icon-button compact" onClick={() => setDraft({ ...draft, senses: draft.senses.length > 1 ? draft.senses.filter((_, itemIndex) => itemIndex !== index) : [blankSense()] })} aria-label="删除义项"><X size={15} /></button>
+              <input value={sense.partOfSpeech} onChange={(event) => editDraft({ ...draft, senses: replaceSense(draft.senses, index, { ...sense, partOfSpeech: event.target.value }) })} placeholder="词性，如 noun" aria-label="词性" />
+              <input value={sense.definitionZh} onChange={(event) => editDraft({ ...draft, senses: replaceSense(draft.senses, index, { ...sense, definitionZh: event.target.value }) })} placeholder="中文释义" aria-label="中文释义" />
+              <button className="icon-button compact" onClick={() => editDraft({ ...draft, senses: draft.senses.length > 1 ? draft.senses.filter((_, itemIndex) => itemIndex !== index) : [blankSense()] })} aria-label="删除义项"><X size={15} /></button>
             </div>
           ))}
         </div>
@@ -375,26 +436,26 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast }: { entry:
       <section className="form-section classification-section">
         <div className="section-title"><div><p className="eyebrow">归类</p><h2>分类与标签</h2></div></div>
         <div className="form-grid">
-          <label>主分类<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-          <label>标签<input value={draft.tagNames.join('，')} onChange={(event) => setDraft({ ...draft, tagNames: event.target.value.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean) })} placeholder="用逗号分隔" /></label>
+          <label>主分类<select value={draft.categoryId} onChange={(event) => editDraft({ ...draft, categoryId: event.target.value })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+          <label>标签<input value={draft.tagNames.join('，')} onChange={(event) => editDraft({ ...draft, tagNames: event.target.value.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean) })} placeholder="用逗号分隔" /></label>
         </div>
         {entry.suggestedCategory && <div className="suggestion"><Sparkles size={16} /><span>AI 建议新分类「{entry.suggestedCategory}」</span><button onClick={() => void acceptSuggestedCategory()}>确认创建</button></div>}
       </section>
 
       <section className="form-section roots-section">
         <div className="section-title"><div><p className="eyebrow">词源</p><h2>词根关联</h2></div><span className="source-label">来自本地辞典</span></div>
-        {entry.rootMatches.length ? <div className="root-grid">{entry.rootMatches.map((match) => <button className="root-card" key={`${match.root}-${match.sourceAnchor}`} onClick={() => void window.api.roots.openSource(match.sourceAnchor)}><span className="root-card-top"><code>{match.root}</code><ExternalLink size={14} /></span><strong>{match.meaning}</strong><small>{match.matchedVia === 'lemma' ? '按原形匹配 · ' : ''}{match.sourceLabel}</small></button>)}</div> : <div className="root-empty"><Tag size={17} />该辞典暂未找到可核实的词根。</div>}
+        {entry.rootMatches.length ? <div className="root-grid">{entry.rootMatches.map((match) => <button className="root-card" key={`${match.root}-${match.sourceAnchor}`} onClick={() => void window.api.roots.openSource(match.sourceAnchor)}><span className="root-card-top"><code>{match.root}</code><ExternalLink size={14} /></span><strong>{match.meaning}</strong>{match.formationNote && <p>{match.formationNote}</p>}<small>{match.matchedVia === 'lemma' ? '按原形匹配 · ' : ''}{match.sourceLabel}</small></button>)}</div> : <div className="root-empty"><Tag size={17} />该辞典暂未找到可核实的词根。</div>}
       </section>
 
       <section className="form-section review-section">
-        <label className="check-field"><input type="checkbox" checked={draft.aiReviewed} onChange={(event) => setDraft({ ...draft, aiReviewed: event.target.checked })} />我已核对 AI 生成的内容</label>
+        <label className="check-field"><input type="checkbox" checked={draft.aiReviewed} onChange={(event) => editDraft({ ...draft, aiReviewed: event.target.checked })} />我已核对当前内容</label>
         <div className="detail-actions"><button className="danger-button" onClick={() => void moveToTrash()}><Trash2 size={16} />移入回收站</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}{saving ? '保存中' : '保存修改'}</button></div>
       </section>
     </article>
   )
 }
 
-function AddWordDialog({ onClose, onCreated, onToast }: { onClose: () => void; onCreated: (id: string) => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
+function AddWordDialog({ onClose, onCreated, onToast }: { onClose: () => void; onCreated: (result: WordCreateResult) => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
   const [word, setWord] = useState('')
   const [creating, setCreating] = useState(false)
   const create = async (event: FormEvent): Promise<void> => {
@@ -402,8 +463,8 @@ function AddWordDialog({ onClose, onCreated, onToast }: { onClose: () => void; o
     setCreating(true)
     try {
       const result = await window.api.words.create(word)
-      onToast(result.duplicate ? 'success' : 'success', result.duplicate ? '该单词已存在，已为你打开。' : '单词已加入待 AI 处理队列。')
-      onCreated(result.entry.id)
+      onToast('success', result.duplicate ? '该单词已存在，已为你打开。' : '单词已加入待 AI 处理队列。')
+      onCreated(result)
     } catch (error) {
       onToast('error', messageOf(error))
     } finally {
@@ -464,10 +525,19 @@ function SettingsDialog({ onClose, onToast }: { onClose: () => void; onToast: (k
     }
   }
 
+  const exportData = async (format: ExportFormat): Promise<void> => {
+    try {
+      const exported = await window.api.data.export(format)
+      if (exported) onToast('success', `${format.toUpperCase()} 导出完成。`)
+    } catch (error) {
+      onToast('error', messageOf(error))
+    }
+  }
+
   return <Dialog title="设置" onClose={onClose} wide>{!settings ? <ListLoading /> : <div className="settings-stack">
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h3>本地 AI</h3><p>{ollama?.message ?? '正在检查 Ollama…'}</p></div><span className={`connection-dot ${ollama?.available ? 'online' : ''}`} /></div><label>Ollama 地址<input value={settings.ollamaUrl} onChange={(event) => setSettings({ ...settings, ollamaUrl: event.target.value })} /></label><label>默认模型<select value={settings.ollamaModel} onChange={(event) => setSettings({ ...settings, ollamaModel: event.target.value })}><option value="">自动选择第一个可用模型</option>{ollama?.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><button className="outline-button" onClick={() => void reload()}><RefreshCw size={15} />重新检测</button></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Database size={18} /></span><div><h3>词根辞典</h3><p>{rootStatus?.message ?? '正在读取索引状态…'}</p></div></div><label>HTML 文件<input value={settings.dictionaryPath} onChange={(event) => setSettings({ ...settings, dictionaryPath: event.target.value })} /></label><div className="setting-buttons"><button className="outline-button" onClick={() => void chooseDictionary()}>选择文件</button><button className="outline-button" onClick={() => void rebuildIndex()}><RefreshCw size={15} />重建索引{rootStatus?.ready ? ` · ${rootStatus.indexedWords} 词` : ''}</button></div></section>
-    <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><FileDown size={18} /></span><div><h3>数据与备份</h3><p>数据库每天自动备份，保留最近 7 份。</p></div></div><div className="setting-buttons"><button className="outline-button" onClick={() => void window.api.data.openFolder()}>打开数据目录</button><button className="outline-button" onClick={() => void window.api.data.export()}>导出 SQLite 备份</button></div></section>
+    <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><FileDown size={18} /></span><div><h3>数据与备份</h3><p>数据库每小时检查跨日备份，保留最近 7 份。</p></div></div><div className="setting-buttons"><button className="outline-button" onClick={() => void window.api.data.openFolder()}>打开数据目录</button><button className="outline-button" onClick={() => void exportData('json')}>导出 JSON</button><button className="outline-button" onClick={() => void exportData('csv')}>导出 CSV</button><button className="outline-button" onClick={() => void exportData('sqlite')}>导出 SQLite</button></div></section>
     <div className="dialog-actions"><button className="text-button" onClick={onClose}>关闭</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle size={17} className="spin" /> : <Check size={17} />}保存设置</button></div>
   </div>}</Dialog>
 }

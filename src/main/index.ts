@@ -1,16 +1,19 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import path from 'node:path'
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, promises as fs, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { AiProviderRegistry, OllamaProvider } from './ai-provider'
+import { wordsToCsv } from './data-export'
 import { AppDatabase } from './database'
-import { checkOllama } from './ollama'
 import { QueueProcessor } from './queue-processor'
 import { RootIndexer } from './root-indexer'
-import type { AppSettings, WordDraft, WordFilters } from '../shared/types'
+import type { AppSettings, ExportFormat, WordDraft, WordFilters } from '../shared/types'
 
 let windowRef: BrowserWindow | null = null
 let database: AppDatabase
 let rootIndexer: RootIndexer
 let processor: QueueProcessor
+let providers: AiProviderRegistry
+let backupTimer: NodeJS.Timeout | null = null
 
 const notifyChanged = (): void => windowRef?.webContents.send('words:changed')
 
@@ -21,6 +24,13 @@ async function refreshRootMatches(wordId: string): Promise<void> {
   const matches = await rootIndexer.match(entry.word, settings.dictionaryPath)
   database.setRootMatches(wordId, matches)
   notifyChanged()
+}
+
+function scheduleRootRefresh(wordId: string): void {
+  void refreshRootMatches(wordId).catch((error: unknown) => {
+    console.error('词根索引刷新失败：', error)
+    notifyChanged()
+  })
 }
 
 function createWindow(): void {
@@ -35,7 +45,7 @@ function createWindow(): void {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   })
 
@@ -65,20 +75,31 @@ async function backupIfNeeded(): Promise<void> {
   oldBackups.forEach((backup) => unlinkSync(backup.fullPath))
 }
 
+function startBackupSchedule(): void {
+  backupTimer ??= setInterval(() => {
+    void backupIfNeeded().catch((error: unknown) => console.error('自动备份失败：', error))
+  }, 60 * 60 * 1000)
+}
+
+function stopBackupSchedule(): void {
+  if (backupTimer) clearInterval(backupTimer)
+  backupTimer = null
+}
+
 function setupIpc(): void {
   ipcMain.handle('words:list', (_event, filters: WordFilters) => database.listWords(filters))
   ipcMain.handle('words:get', (_event, id: string) => database.getWord(id))
   ipcMain.handle('words:create', (_event, word: string) => {
     const result = database.createWord(word)
     notifyChanged()
-    void refreshRootMatches(result.entry.id)
+    scheduleRootRefresh(result.entry.id)
     void processor.processNext()
     return result
   })
   ipcMain.handle('words:save', (_event, draft: WordDraft) => {
     const entry = database.saveWord(draft)
     notifyChanged()
-    void refreshRootMatches(entry.id)
+    scheduleRootRefresh(entry.id)
     return entry
   })
   ipcMain.handle('words:trash', (_event, id: string) => {
@@ -108,7 +129,12 @@ function setupIpc(): void {
     void processor.processNext()
     return saved
   })
-  ipcMain.handle('ollama:check', () => checkOllama(database.getSettings().ollamaUrl))
+  ipcMain.handle('ollama:check', () => {
+    const settings = database.getSettings()
+    return providers.get('ollama').check(settings)
+  })
+  ipcMain.handle('queue:status', () => processor.getStatus())
+  ipcMain.handle('queue:set-paused', (_event, paused: boolean) => processor.setPaused(paused))
   ipcMain.handle('queue:retry', (_event, wordId: string) => {
     database.retryTask(wordId)
     notifyChanged()
@@ -135,14 +161,28 @@ function setupIpc(): void {
     await shell.openExternal(`file:///${source.replace(/\\/g, '/')}#${encodeURIComponent(anchor)}`)
   })
   ipcMain.handle('data:open-folder', () => shell.openPath(database.directory))
-  ipcMain.handle('data:export', async () => {
+  ipcMain.handle('data:export', async (_event, format: ExportFormat = 'sqlite') => {
+    const exportOptions: Record<ExportFormat, { title: string; defaultPath: string; filterName: string; extension: string }> = {
+      sqlite: { title: '导出生词本数据库备份', defaultPath: 'shengciben-backup.sqlite', filterName: 'SQLite 数据库', extension: 'sqlite' },
+      json: { title: '导出生词本 JSON', defaultPath: 'shengciben-words.json', filterName: 'JSON 文件', extension: 'json' },
+      csv: { title: '导出生词本 CSV', defaultPath: 'shengciben-words.csv', filterName: 'CSV 文件', extension: 'csv' }
+    }
+    const selected = exportOptions[format]
     const options: SaveDialogOptions = {
-      title: '导出生词本数据库备份',
-      defaultPath: 'shengciben-backup.sqlite',
-      filters: [{ name: 'SQLite 数据库', extensions: ['sqlite'] }]
+      title: selected.title,
+      defaultPath: selected.defaultPath,
+      filters: [{ name: selected.filterName, extensions: [selected.extension] }]
     }
     const result = windowRef ? await dialog.showSaveDialog(windowRef, options) : await dialog.showSaveDialog(options)
-    if (!result.canceled && result.filePath) await database.backup(result.filePath)
+    if (result.canceled || !result.filePath) return false
+    if (format === 'sqlite') {
+      await database.backup(result.filePath)
+      return true
+    }
+    const snapshot = database.exportSnapshot()
+    const content = format === 'json' ? JSON.stringify(snapshot, null, 2) : wordsToCsv(snapshot.words)
+    await fs.writeFile(result.filePath, content, 'utf8')
+    return true
   })
 }
 
@@ -150,16 +190,21 @@ app.whenReady().then(async () => {
   app.setName('生词本')
   database = new AppDatabase(app.getPath('userData'))
   rootIndexer = new RootIndexer(database.directory)
-  processor = new QueueProcessor(database, rootIndexer, notifyChanged)
+  providers = new AiProviderRegistry([new OllamaProvider()])
+  processor = new QueueProcessor(database, providers, notifyChanged)
   setupIpc()
   createWindow()
   processor.start()
-  void rootIndexer.ensure(database.getSettings().dictionaryPath).then(notifyChanged).catch(notifyChanged)
+  void rootIndexer.ensure(database.getSettings().dictionaryPath).then(notifyChanged).catch((error: unknown) => {
+    console.error('词根索引初始化失败：', error)
+    notifyChanged()
+  })
   try {
     await backupIfNeeded()
   } catch {
     // A missed backup must not block access to the user's wordbook.
   }
+  startBackupSchedule()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -170,4 +215,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => processor?.stop())
+app.on('before-quit', () => {
+  processor?.stop()
+  stopBackupSchedule()
+})

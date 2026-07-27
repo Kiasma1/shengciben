@@ -6,6 +6,7 @@ import type {
   AppSettings,
   Category,
   EnrichmentStatus,
+  QueueStatus,
   RootMatch,
   Tag,
   WordCreateResult,
@@ -17,6 +18,7 @@ import type {
 
 const UNCATEGORIZED_ID = 'uncategorized'
 const DEFAULT_SETTINGS: AppSettings = {
+  aiProvider: 'ollama',
   ollamaUrl: 'http://127.0.0.1:11434',
   ollamaModel: '',
   dictionaryPath: 'D:\\考试\\translation_codex\\english-word-roots-zh-codex\\英语词根词源分类辞典-Codex重译版.html'
@@ -34,6 +36,7 @@ type WordRow = {
   ai_error: string | null
   ai_reviewed: number
   suggested_category: string | null
+  is_deleted: number
   created_at: string
   updated_at: string
 }
@@ -101,6 +104,7 @@ export class AppDatabase {
         word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
         root TEXT NOT NULL,
         meaning TEXT NOT NULL,
+        formation_note TEXT NOT NULL DEFAULT '',
         source_anchor TEXT NOT NULL,
         source_label TEXT NOT NULL,
         matched_via TEXT NOT NULL
@@ -121,6 +125,11 @@ export class AppDatabase {
       CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, created_at);
     `)
 
+    const rootColumns = this.db.pragma('table_info(root_matches)') as { name: string }[]
+    if (!rootColumns.some((column) => column.name === 'formation_note')) {
+      this.db.exec(`ALTER TABLE root_matches ADD COLUMN formation_note TEXT NOT NULL DEFAULT ''`)
+    }
+
     this.db
       .prepare('INSERT OR IGNORE INTO categories (id, name, color, created_at) VALUES (?, ?, ?, ?)')
       .run(UNCATEGORIZED_ID, '未分类', '#8a6b42', now())
@@ -129,6 +138,11 @@ export class AppDatabase {
     for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
       insertSetting.run(key, value)
     }
+
+    this.db.transaction(() => {
+      this.db.prepare(`UPDATE tasks SET status = 'pending', error = NULL, updated_at = ? WHERE status = 'processing'`).run(now())
+      this.db.prepare(`UPDATE words SET enrichment_status = 'pending', ai_error = NULL, updated_at = ? WHERE enrichment_status = 'processing'`).run(now())
+    })()
   }
 
   listWords(filters: WordFilters = {}): WordEntry[] {
@@ -221,25 +235,24 @@ export class AppDatabase {
     const update = this.db.transaction(() => {
       try {
         this.db
-          .prepare(`UPDATE words SET word = ?, normalized_word = ?, ipa_uk = ?, category_id = ?, ai_reviewed = ?, suggested_category = NULL, updated_at = ? WHERE id = ?`)
-          .run(word, normalizedWord, draft.ipaUk.trim(), draft.categoryId, draft.aiReviewed ? 1 : 0, now(), draft.id)
+          .prepare(`UPDATE words SET word = ?, normalized_word = ?, ipa_uk = ?, category_id = ?, enrichment_status = ?, ai_error = NULL, ai_reviewed = ?, suggested_category = NULL, updated_at = ? WHERE id = ?`)
+          .run(
+            word,
+            normalizedWord,
+            draft.ipaUk.trim(),
+            draft.categoryId,
+            draft.aiReviewed ? 'ready' : 'needs_review',
+            draft.aiReviewed ? 1 : 0,
+            now(),
+            draft.id
+          )
       } catch (error) {
         if (error instanceof Error && error.message.includes('UNIQUE')) throw new Error('该单词已存在。')
         throw error
       }
-      this.db.prepare('DELETE FROM senses WHERE word_id = ?').run(draft.id)
-      const insertSense = this.db.prepare('INSERT INTO senses (id, word_id, part_of_speech, definition_zh, sort_order) VALUES (?, ?, ?, ?, ?)')
-      cleanSenses.forEach((sense, index) => insertSense.run(randomUUID(), draft.id, sense.partOfSpeech, sense.definitionZh, index))
-
-      this.db.prepare('DELETE FROM word_tags WHERE word_id = ?').run(draft.id)
-      const addTag = this.db.prepare('INSERT OR IGNORE INTO tags (id, name, created_at) VALUES (?, ?, ?)')
-      const tagByName = this.db.prepare('SELECT id FROM tags WHERE name = ? COLLATE NOCASE')
-      const joinTag = this.db.prepare('INSERT OR IGNORE INTO word_tags (word_id, tag_id) VALUES (?, ?)')
-      for (const name of [...new Set(draft.tagNames.map((tag) => tag.trim()).filter(Boolean))]) {
-        addTag.run(randomUUID(), name, now())
-        const tag = tagByName.get(name) as { id: string }
-        joinTag.run(draft.id, tag.id)
-      }
+      this.replaceSenses(draft.id, cleanSenses)
+      this.replaceTags(draft.id, draft.tagNames)
+      this.db.prepare(`UPDATE tasks SET status = 'completed', error = NULL, updated_at = ? WHERE word_id = ?`).run(now(), draft.id)
     })
     update()
     const entry = this.getWord(draft.id)
@@ -313,6 +326,27 @@ export class AppDatabase {
     return task ?? null
   }
 
+  getQueueStatus(paused: boolean): QueueStatus {
+    const rows = this.db
+      .prepare(`SELECT status, count(*) AS count FROM tasks WHERE status IN ('pending', 'processing', 'failed') GROUP BY status`)
+      .all() as { status: 'pending' | 'processing' | 'failed'; count: number }[]
+    const counts = Object.fromEntries(rows.map((row) => [row.status, row.count])) as Partial<Record<'pending' | 'processing' | 'failed', number>>
+    return {
+      pending: counts.pending ?? 0,
+      processing: counts.processing ?? 0,
+      failed: counts.failed ?? 0,
+      paused
+    }
+  }
+
+  isTaskProcessing(taskId: string): boolean {
+    return Boolean(this.db.prepare(`SELECT 1 FROM tasks WHERE id = ? AND status = 'processing'`).get(taskId))
+  }
+
+  isTaskPending(taskId: string): boolean {
+    return Boolean(this.db.prepare(`SELECT 1 FROM tasks WHERE id = ? AND status = 'pending'`).get(taskId))
+  }
+
   setTaskStatus(taskId: string, status: 'pending' | 'processing' | 'failed' | 'completed', error: string | null = null): void {
     this.db.prepare('UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?').run(status, error, now(), taskId)
   }
@@ -338,21 +372,8 @@ export class AppDatabase {
       this.db
         .prepare(`UPDATE words SET ipa_uk = ?, category_id = ?, enrichment_status = 'needs_review', ai_error = NULL, ai_reviewed = 0, suggested_category = ?, updated_at = ? WHERE id = ?`)
         .run(result.ipaUk, categoryId, suggestedCategory, now(), wordId)
-      this.db.prepare('DELETE FROM senses WHERE word_id = ?').run(wordId)
-      const insertSense = this.db.prepare('INSERT INTO senses (id, word_id, part_of_speech, definition_zh, sort_order) VALUES (?, ?, ?, ?, ?)')
-      result.senses.forEach((sense, index) => insertSense.run(randomUUID(), wordId, sense.partOfSpeech, sense.definitionZh, index))
-
-      this.db.prepare('DELETE FROM word_tags WHERE word_id = ?').run(wordId)
-      const insertTag = this.db.prepare('INSERT OR IGNORE INTO tags (id, name, created_at) VALUES (?, ?, ?)')
-      const findTag = this.db.prepare('SELECT id FROM tags WHERE name = ? COLLATE NOCASE')
-      const connectTag = this.db.prepare('INSERT OR IGNORE INTO word_tags (word_id, tag_id) VALUES (?, ?)')
-      for (const rawTag of result.tagNames) {
-        const tag = rawTag.trim()
-        if (!tag) continue
-        insertTag.run(randomUUID(), tag, now())
-        const tagRow = findTag.get(tag) as { id: string }
-        connectTag.run(wordId, tagRow.id)
-      }
+      this.replaceSenses(wordId, result.senses)
+      this.replaceTags(wordId, result.tagNames)
     })
     transaction()
   }
@@ -360,8 +381,10 @@ export class AppDatabase {
   setRootMatches(wordId: string, matches: RootMatch[]): void {
     const transaction = this.db.transaction(() => {
       this.db.prepare('DELETE FROM root_matches WHERE word_id = ?').run(wordId)
-      const insert = this.db.prepare(`INSERT INTO root_matches (id, word_id, root, meaning, source_anchor, source_label, matched_via) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      matches.forEach((match) => insert.run(randomUUID(), wordId, match.root, match.meaning, match.sourceAnchor, match.sourceLabel, match.matchedVia))
+      const insert = this.db.prepare(`INSERT INTO root_matches (id, word_id, root, meaning, formation_note, source_anchor, source_label, matched_via) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      matches.forEach((match) =>
+        insert.run(randomUUID(), wordId, match.root, match.meaning, match.formationNote, match.sourceAnchor, match.sourceLabel, match.matchedVia)
+      )
     })
     transaction()
   }
@@ -378,6 +401,36 @@ export class AppDatabase {
     await this.db.backup(destination)
   }
 
+  exportSnapshot(): { exportedAt: string; categories: Category[]; words: WordEntry[] } {
+    return {
+      exportedAt: now(),
+      categories: this.listCategories(),
+      words: this.listWords()
+    }
+  }
+
+  close(): void {
+    this.db.close()
+  }
+
+  private replaceSenses(wordId: string, senses: WordSense[]): void {
+    this.db.prepare('DELETE FROM senses WHERE word_id = ?').run(wordId)
+    const insert = this.db.prepare('INSERT INTO senses (id, word_id, part_of_speech, definition_zh, sort_order) VALUES (?, ?, ?, ?, ?)')
+    senses.forEach((sense, index) => insert.run(randomUUID(), wordId, sense.partOfSpeech, sense.definitionZh, index))
+  }
+
+  private replaceTags(wordId: string, rawNames: string[]): void {
+    this.db.prepare('DELETE FROM word_tags WHERE word_id = ?').run(wordId)
+    const insertTag = this.db.prepare('INSERT OR IGNORE INTO tags (id, name, created_at) VALUES (?, ?, ?)')
+    const findTag = this.db.prepare('SELECT id FROM tags WHERE name = ? COLLATE NOCASE')
+    const connectTag = this.db.prepare('INSERT OR IGNORE INTO word_tags (word_id, tag_id) VALUES (?, ?)')
+    for (const name of [...new Set(rawNames.map((tag) => tag.trim()).filter(Boolean))]) {
+      insertTag.run(randomUUID(), name, now())
+      const tag = findTag.get(name) as { id: string }
+      connectTag.run(wordId, tag.id)
+    }
+  }
+
   private hydrateWord(row: WordRow): WordEntry {
     const senses = this.db
       .prepare('SELECT id, part_of_speech AS partOfSpeech, definition_zh AS definitionZh FROM senses WHERE word_id = ? ORDER BY sort_order')
@@ -386,7 +439,7 @@ export class AppDatabase {
       .prepare(`SELECT t.id, t.name FROM tags t JOIN word_tags wt ON wt.tag_id = t.id WHERE wt.word_id = ? ORDER BY t.name COLLATE NOCASE`)
       .all(row.id) as Tag[]
     const rootMatches = this.db
-      .prepare(`SELECT id, root, meaning, source_anchor AS sourceAnchor, source_label AS sourceLabel, matched_via AS matchedVia FROM root_matches WHERE word_id = ?`)
+      .prepare(`SELECT id, root, meaning, formation_note AS formationNote, source_anchor AS sourceAnchor, source_label AS sourceLabel, matched_via AS matchedVia FROM root_matches WHERE word_id = ?`)
       .all(row.id) as RootMatch[]
     return {
       id: row.id,
@@ -403,6 +456,7 @@ export class AppDatabase {
       aiError: row.ai_error,
       aiReviewed: Boolean(row.ai_reviewed),
       suggestedCategory: row.suggested_category,
+      isDeleted: Boolean(row.is_deleted),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppSettings, WordDraft, WordFilters } from '../shared/types'
+import type { AppSettings, ExportFormat, WordDraft, WordFilters } from '../shared/types'
 
 contextBridge.exposeInMainWorld('api', {
   words: {
@@ -21,7 +21,11 @@ contextBridge.exposeInMainWorld('api', {
     save: (settings: AppSettings) => ipcRenderer.invoke('settings:save', settings)
   },
   ollama: { check: () => ipcRenderer.invoke('ollama:check') },
-  queue: { retry: (wordId: string) => ipcRenderer.invoke('queue:retry', wordId) },
+  queue: {
+    status: () => ipcRenderer.invoke('queue:status'),
+    setPaused: (paused: boolean) => ipcRenderer.invoke('queue:set-paused', paused),
+    retry: (wordId: string) => ipcRenderer.invoke('queue:retry', wordId)
+  },
   roots: {
     status: () => ipcRenderer.invoke('roots:status'),
     rebuild: () => ipcRenderer.invoke('roots:rebuild'),
@@ -30,7 +34,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   data: {
     openFolder: () => ipcRenderer.invoke('data:open-folder'),
-    export: () => ipcRenderer.invoke('data:export')
+    export: (format: ExportFormat) => ipcRenderer.invoke('data:export', format)
   },
   onWordsChanged: (listener: () => void) => {
     const handler = (): void => listener()

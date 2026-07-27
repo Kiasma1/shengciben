@@ -4,12 +4,14 @@ import type { RootIndexStatus, RootMatch } from '../shared/types'
 
 type IndexedRoot = Omit<RootMatch, 'matchedVia'>
 type IndexFile = {
+  version: number
   sourcePath: string
   sourceMtimeMs: number
   updatedAt: string
   entries: Record<string, IndexedRoot[]>
 }
 
+const INDEX_VERSION = 2
 const decodeHtml = (value: string): string =>
   value
     .replace(/&nbsp;/g, ' ')
@@ -37,6 +39,30 @@ const rootIdentity = (value: string): string =>
     .replace(/⁹/g, '9')
     .replace(/[^a-z0-9-]/g, '')
 
+export function lemmaCandidates(word: string): string[] {
+  const candidates = new Set<string>()
+  const addStemAndCollapsedDouble = (stem: string): void => {
+    candidates.add(stem)
+    if (/([b-df-hj-np-tv-z])\1$/i.test(stem)) candidates.add(stem.slice(0, -1))
+  }
+
+  if (word.endsWith('ies') && word.length > 4) candidates.add(`${word.slice(0, -3)}y`)
+  if (word.endsWith('ied') && word.length > 4) candidates.add(`${word.slice(0, -3)}y`)
+  if (word.endsWith('es') && word.length > 3) candidates.add(word.slice(0, -2))
+  if (word.endsWith('s') && word.length > 3) candidates.add(word.slice(0, -1))
+  if (word.endsWith('ing') && word.length > 5) {
+    const stem = word.slice(0, -3)
+    addStemAndCollapsedDouble(stem)
+    candidates.add(`${stem}e`)
+  }
+  if (word.endsWith('ed') && word.length > 4) {
+    const stem = word.slice(0, -2)
+    addStemAndCollapsedDouble(stem)
+    candidates.add(word.slice(0, -1))
+  }
+  return [...candidates].filter((candidate) => candidate !== word)
+}
+
 export class RootIndexer {
   private readonly indexPath: string
   private index: IndexFile | null = null
@@ -53,7 +79,12 @@ export class RootIndexer {
 
     const sourceStat = await fs.stat(sourcePath)
     if (!this.index) await this.loadCached()
-    if (!this.index || this.index.sourcePath !== sourcePath || this.index.sourceMtimeMs !== sourceStat.mtimeMs) {
+    if (
+      !this.index ||
+      this.index.version !== INDEX_VERSION ||
+      this.index.sourcePath !== sourcePath ||
+      this.index.sourceMtimeMs !== sourceStat.mtimeMs
+    ) {
       await this.build(sourcePath, sourceStat.mtimeMs)
     }
     return this.status(sourcePath, '词根索引已就绪。')
@@ -74,7 +105,7 @@ export class RootIndexer {
     const exact = this.index.entries[exactKey]
     if (exact?.length) return exact.map((match) => ({ ...match, matchedVia: 'exact' }))
 
-    for (const lemma of this.lemmaCandidates(exactKey)) {
+    for (const lemma of lemmaCandidates(exactKey)) {
       const matches = this.index.entries[lemma]
       if (matches?.length) return matches.map((match) => ({ ...match, matchedVia: 'lemma' }))
     }
@@ -100,6 +131,7 @@ export class RootIndexer {
     const markup = this.extractMarkup(html)
     const entries = this.parseEntries(markup)
     this.index = {
+      version: INDEX_VERSION,
       sourcePath,
       sourceMtimeMs,
       updatedAt: new Date().toISOString(),
@@ -141,6 +173,7 @@ export class RootIndexer {
       const rootMatch: IndexedRoot = {
         root,
         meaning,
+        formationNote: '',
         sourceAnchor: anchor,
         sourceLabel: `词根 ${root}`
       }
@@ -148,12 +181,13 @@ export class RootIndexer {
         const key = rootIdentity(form)
         if (key) rootMetadata.set(key, rootMatch)
       }
-      const words = this.extractWords(section[3])
-      for (const term of words) {
-        const key = normalized(term)
+      const examples = this.extractWordExamples(section[3])
+      for (const example of examples) {
+        const key = normalized(example.word)
         if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(key) || key.length < 2) continue
         const existing = entries.get(key) ?? []
-        if (!existing.some((item) => item.root === rootMatch.root && item.sourceAnchor === rootMatch.sourceAnchor)) existing.push(rootMatch)
+        const wordMatch = { ...rootMatch, formationNote: example.formationNote }
+        if (!existing.some((item) => item.root === wordMatch.root && item.sourceAnchor === wordMatch.sourceAnchor)) existing.push(wordMatch)
         entries.set(key, existing)
       }
     }
@@ -165,11 +199,17 @@ export class RootIndexer {
       const key = normalized(word)
       if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(key)) continue
       const rootForms = textContent(item[2]).split(/[,、]/).map((form) => form.trim()).filter(Boolean)
-      const resolved = rootForms.map((form) => rootMetadata.get(rootIdentity(form)) ?? {
-        root: form,
-        meaning: '词根义待在原辞典中查看',
-        sourceAnchor: 'letter-english-root-index',
-        sourceLabel: '英→根索引'
+      const resolved = rootForms.map((form) => {
+        const metadata = rootMetadata.get(rootIdentity(form))
+        return metadata
+          ? { ...metadata, formationNote: '由原辞典“英→根索引”关联。' }
+          : {
+              root: form,
+              meaning: '词根义待在原辞典中查看',
+              formationNote: '由原辞典“英→根索引”关联。',
+              sourceAnchor: 'letter-english-root-index',
+              sourceLabel: '英→根索引'
+            }
       })
       const existing = entries.get(key) ?? []
       for (const match of resolved) {
@@ -187,39 +227,35 @@ export class RootIndexer {
     return value || '词根义待在原辞典中查看'
   }
 
-  private extractWords(section: string): string[] {
-    const words: string[] = []
-    const listStack: { firstCode: string | null }[] = []
-    const tokenPattern = /<li\b[^>]*>|<\/li>|<code\b[^>]*>([\s\S]*?)<\/code>|<[^>]*>/gi
+  private extractWordExamples(section: string): { word: string; formationNote: string }[] {
+    const examples: { word: string; formationNote: string }[] = []
+    const listStack: { firstCode: string | null; markup: string }[] = []
+    const tokenPattern = /<li\b[^>]*>|<\/li>|<code\b[^>]*>([\s\S]*?)<\/code>|<[^>]*>|[^<]+/gi
     for (const token of section.matchAll(tokenPattern)) {
       const value = token[0]
       if (/^<li\b/i.test(value)) {
-        listStack.push({ firstCode: null })
+        listStack.push({ firstCode: null, markup: '' })
       } else if (/^<\/li/i.test(value)) {
         const item = listStack.pop()
-        if (item?.firstCode) words.push(item.firstCode)
-      } else if (token[1] && listStack.length) {
-        const item = listStack[listStack.length - 1]
-        if (!item.firstCode) item.firstCode = textContent(token[1])
+        if (item?.firstCode) {
+          const fullText = textContent(item.markup)
+          const formationNote = fullText.toLocaleLowerCase('en-US').startsWith(item.firstCode.toLocaleLowerCase('en-US'))
+            ? fullText.slice(item.firstCode.length).replace(/^[:：\s]+/, '').trim()
+            : fullText
+          examples.push({
+            word: item.firstCode,
+            formationNote: formationNote.length > 360 ? `${formationNote.slice(0, 360).trim()}…` : formationNote
+          })
+        }
+      } else if (listStack.length) {
+        for (const item of listStack) item.markup += value
+        if (token[1]) {
+          const item = listStack[listStack.length - 1]
+          if (!item.firstCode) item.firstCode = textContent(token[1])
+        }
       }
     }
-    return words
-  }
-
-  private lemmaCandidates(word: string): string[] {
-    const candidates = new Set<string>()
-    if (word.endsWith('ies') && word.length > 4) candidates.add(`${word.slice(0, -3)}y`)
-    if (word.endsWith('es') && word.length > 3) candidates.add(word.slice(0, -2))
-    if (word.endsWith('s') && word.length > 3) candidates.add(word.slice(0, -1))
-    if (word.endsWith('ing') && word.length > 5) {
-      candidates.add(word.slice(0, -3))
-      candidates.add(`${word.slice(0, -3)}e`)
-    }
-    if (word.endsWith('ed') && word.length > 4) {
-      candidates.add(word.slice(0, -2))
-      candidates.add(`${word.slice(0, -1)}`)
-    }
-    return [...candidates].filter((candidate) => candidate !== word)
+    return examples
   }
 
   private status(sourcePath: string, message: string): RootIndexStatus {

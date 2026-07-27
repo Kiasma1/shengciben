@@ -3,7 +3,9 @@
 import type {
   AppSettings,
   Category,
+  ExportFormat,
   OllamaStatus,
+  QueueStatus,
   RootIndexStatus,
   Tag,
   WordCreateResult,
@@ -34,7 +36,11 @@ declare global {
         save: (settings: AppSettings) => Promise<AppSettings>
       }
       ollama: { check: () => Promise<OllamaStatus> }
-      queue: { retry: (wordId: string) => Promise<void> }
+      queue: {
+        status: () => Promise<QueueStatus>
+        setPaused: (paused: boolean) => Promise<QueueStatus>
+        retry: (wordId: string) => Promise<void>
+      }
       roots: {
         status: () => Promise<RootIndexStatus>
         rebuild: () => Promise<RootIndexStatus>
@@ -43,7 +49,7 @@ declare global {
       }
       data: {
         openFolder: () => Promise<string>
-        export: () => Promise<void>
+        export: (format: ExportFormat) => Promise<boolean>
       }
       onWordsChanged: (listener: () => void) => () => void
     }

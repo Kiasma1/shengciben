@@ -23,6 +23,7 @@ export interface RootMatch {
   id?: string
   root: string
   meaning: string
+  formationNote: string
   sourceAnchor: string
   sourceLabel: string
   matchedVia: RootMatchMode
@@ -43,6 +44,7 @@ export interface WordEntry {
   aiError: string | null
   aiReviewed: boolean
   suggestedCategory: string | null
+  isDeleted: boolean
   createdAt: string
   updatedAt: string
 }
@@ -66,6 +68,7 @@ export interface WordDraft {
 }
 
 export interface AppSettings {
+  aiProvider: 'ollama'
   ollamaUrl: string
   ollamaModel: string
   dictionaryPath: string
@@ -75,6 +78,13 @@ export interface OllamaStatus {
   available: boolean
   models: string[]
   message: string
+}
+
+export interface AiEnrichment {
+  ipaUk: string
+  senses: WordSense[]
+  suggestedCategory: string | null
+  tagNames: string[]
 }
 
 export interface RootIndexStatus {
@@ -89,3 +99,12 @@ export interface WordCreateResult {
   entry: WordEntry
   duplicate: boolean
 }
+
+export interface QueueStatus {
+  pending: number
+  processing: number
+  failed: number
+  paused: boolean
+}
+
+export type ExportFormat = 'sqlite' | 'json' | 'csv'
