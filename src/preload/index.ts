@@ -2,6 +2,17 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { AppSettings, ExportFormat, WordDraft, WordFilters } from '../shared/types'
 
 contextBridge.exposeInMainWorld('api', {
+  window: {
+    isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+    minimize: () => ipcRenderer.send('window:minimize'),
+    toggleMaximize: () => ipcRenderer.send('window:toggle-maximize'),
+    close: () => ipcRenderer.send('window:close'),
+    onMaximizedChanged: (listener: (maximized: boolean) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, maximized: boolean): void => listener(maximized)
+      ipcRenderer.on('window:maximized-changed', handler)
+      return () => ipcRenderer.removeListener('window:maximized-changed', handler)
+    }
+  },
   words: {
     list: (filters: WordFilters) => ipcRenderer.invoke('words:list', filters),
     get: (id: string) => ipcRenderer.invoke('words:get', id),
@@ -20,7 +31,7 @@ contextBridge.exposeInMainWorld('api', {
     get: () => ipcRenderer.invoke('settings:get'),
     save: (settings: AppSettings) => ipcRenderer.invoke('settings:save', settings)
   },
-  ollama: { check: () => ipcRenderer.invoke('ollama:check') },
+  ollama: { check: (url?: string) => ipcRenderer.invoke('ollama:check', url) },
   queue: {
     status: () => ipcRenderer.invoke('queue:status'),
     setPaused: (paused: boolean) => ipcRenderer.invoke('queue:set-paused', paused),

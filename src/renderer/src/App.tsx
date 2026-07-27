@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from 'react'
 import {
   ArchiveRestore,
   BookOpen,
@@ -9,13 +9,17 @@ import {
   FileDown,
   FolderPlus,
   LoaderCircle,
+  Maximize2,
+  Minus,
   Pause,
+  Palette,
   Play,
   Plus,
   RefreshCw,
   Search,
   Settings,
   Sparkles,
+  SquareStack,
   Tag,
   Trash2,
   X
@@ -37,6 +41,17 @@ import type {
 type CollectionView = 'active' | 'trash'
 type Toast = { kind: 'success' | 'error'; message: string } | null
 type ToastKind = 'success' | 'error'
+type VisualTheme = 'paper' | 'studio' | 'nocturne' | 'redline' | 'punch' | 'aurora' | 'neon'
+
+const THEME_OPTIONS: { id: VisualTheme; name: string; description: string }[] = [
+  { id: 'paper', name: '静纸', description: '暖纸、深蓝、克制' },
+  { id: 'studio', name: 'Studio', description: '冷白、高密度、专业' },
+  { id: 'nocturne', name: '夜读', description: '深色、暖金、沉浸' },
+  { id: 'redline', name: '红线排印', description: '黑白红、网格、编辑感' },
+  { id: 'punch', name: '铅块 Punch', description: '撞色、粗边、硬阴影' },
+  { id: 'aurora', name: '极光玻璃', description: '渐变、通透、柔和' },
+  { id: 'neon', name: '霓虹终端', description: '深黑、青紫、技术感' }
+]
 
 const CATEGORY_COLORS = ['#8a6b42', '#3d6b65', '#5567a4', '#9d5b6e', '#8d7048', '#527ba0']
 
@@ -69,19 +84,29 @@ export default function App(): ReactElement {
   const [collectionView, setCollectionView] = useState<CollectionView>('active')
   const [isLoading, setIsLoading] = useState(true)
   const [addOpen, setAddOpen] = useState(false)
+  const [categoryOpen, setCategoryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [themeOpen, setThemeOpen] = useState(false)
+  const [theme, setTheme] = useState<VisualTheme>(() => {
+    const saved = window.localStorage.getItem('visual-theme')
+    return THEME_OPTIONS.some((option) => option.id === saved) ? saved as VisualTheme : 'paper'
+  })
+  const [maximized, setMaximized] = useState(false)
+  const [detailDirty, setDetailDirty] = useState(false)
   const [toast, setToast] = useState<Toast>(null)
   const [queueStatus, setQueueStatus] = useState<QueueStatus>({ pending: 0, processing: 0, failed: 0, paused: false })
+  const searchRef = useRef<HTMLInputElement>(null)
+  const debouncedQuery = useDebouncedValue(query, 180)
 
   const filters = useMemo(
     () => ({
-      query,
+      query: debouncedQuery,
       categoryId: selectedCategoryId,
       status: statusFilter,
       sort,
       includeDeleted: collectionView === 'trash'
     }),
-    [collectionView, query, selectedCategoryId, sort, statusFilter]
+    [collectionView, debouncedQuery, selectedCategoryId, sort, statusFilter]
   )
 
   const selected = entries.find((entry) => entry.id === selectedId) ?? entries[0] ?? null
@@ -113,17 +138,49 @@ export default function App(): ReactElement {
     return unsubscribe
   }, [filters])
 
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setThemeOpen(false)
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+      if (document.querySelector('[role="dialog"]')) return
+      if (event.key.toLocaleLowerCase('en-US') === 'k') {
+        event.preventDefault()
+        searchRef.current?.focus()
+      } else if (event.key.toLocaleLowerCase('en-US') === 'n') {
+        event.preventDefault()
+        setAddOpen(true)
+      }
+    }
+    window.addEventListener('keydown', handleShortcut)
+    return () => window.removeEventListener('keydown', handleShortcut)
+  }, [])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.style.colorScheme = theme === 'nocturne' || theme === 'neon' ? 'dark' : 'light'
+    window.localStorage.setItem('visual-theme', theme)
+  }, [theme])
+
+  useEffect(() => {
+    void window.api.window.isMaximized().then(setMaximized)
+    return window.api.window.onMaximizedChanged(setMaximized)
+  }, [])
+
+  useEffect(() => {
+    setDetailDirty(false)
+  }, [selectedId])
+
   const showToast = (kind: ToastKind, message: string): void => {
     setToast({ kind, message })
     window.setTimeout(() => setToast(null), 3600)
   }
 
-  const createCategory = async (): Promise<void> => {
-    const name = window.prompt('新分类名称')?.trim()
-    if (!name) return
+  const createCategory = async (name: string): Promise<void> => {
     try {
       const category = await window.api.categories.create(name, CATEGORY_COLORS[categories.length % CATEGORY_COLORS.length])
       setSelectedCategoryId(category.id)
+      setCollectionView('active')
+      setCategoryOpen(false)
       showToast('success', `已创建分类「${category.name}」。`)
     } catch (error) {
       showToast('error', messageOf(error))
@@ -149,8 +206,28 @@ export default function App(): ReactElement {
     }
   }
 
+  const closeWindow = (): void => {
+    if (!detailDirty || window.confirm('当前单词有尚未保存的修改，仍要关闭生词本吗？')) window.api.window.close()
+  }
+
   return (
-    <main className="app-shell">
+    <div className="app-frame">
+      <TitleBar
+        theme={theme}
+        themeOpen={themeOpen}
+        maximized={maximized}
+        onToggleTheme={() => setThemeOpen((value) => !value)}
+        onSelectTheme={(nextTheme) => {
+          setTheme(nextTheme)
+          setThemeOpen(false)
+        }}
+        onMinimize={() => window.api.window.minimize()}
+        onToggleMaximize={() => window.api.window.toggleMaximize()}
+        onClose={closeWindow}
+      />
+      <main className="app-shell">
+      <a className="skip-link" href="#word-list">跳到单词列表</a>
+      <a className="skip-link" href="#word-detail">跳到单词详情</a>
       <Sidebar
         categories={categories}
         selectedCategoryId={selectedCategoryId}
@@ -167,16 +244,16 @@ export default function App(): ReactElement {
           setCollectionView('trash')
           setSelectedCategoryId(null)
         }}
-        onCreateCategory={() => void createCategory()}
+        onCreateCategory={() => setCategoryOpen(true)}
         onDeleteCategory={(category) => void removeCategory(category)}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <section className="word-column" aria-label="单词列表">
+      <section id="word-list" className="word-column" aria-label="单词列表" tabIndex={-1}>
         <header className="list-header">
           <div className="word-search">
             <Search size={18} aria-hidden="true" />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索单词、释义、标签或词根" aria-label="搜索单词" />
+            <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索单词、释义、标签或词根" aria-label="搜索单词" aria-keyshortcuts="Control+K" />
             {query && (
               <button className="icon-button" onClick={() => setQuery('')} aria-label="清除搜索">
                 <X size={16} />
@@ -192,7 +269,7 @@ export default function App(): ReactElement {
               <option value="ready">已核对</option>
               <option value="failed">处理失败</option>
             </select>
-            <button className="text-button" onClick={() => setSort((value) => (value === 'recent' ? 'alphabetical' : 'recent'))}>
+            <button className="text-button" onClick={() => setSort((value) => (value === 'recent' ? 'alphabetical' : 'recent'))} aria-label={`当前按${sort === 'recent' ? '最近更新' : '字母顺序'}排列，点击切换`}>
               {sort === 'recent' ? '最近更新' : 'A–Z'}
             </button>
           </div>
@@ -203,19 +280,19 @@ export default function App(): ReactElement {
           <span>{entries.length} 个条目</span>
         </div>
 
-        <div className="word-list">
+        <div className="word-list" aria-busy={isLoading}>
           {isLoading ? <ListLoading /> : entries.length ? entries.map((entry) => <WordRow key={entry.id} entry={entry} selected={entry.id === selected?.id} onClick={() => setSelectedId(entry.id)} />) : <ListEmpty view={collectionView} query={query} />}
         </div>
       </section>
 
-      <section className="detail-column" aria-label="单词详情">
+      <section id="word-detail" className="detail-column" aria-label="单词详情" tabIndex={-1}>
         <header className="detail-header">
           <div>
             <p className="eyebrow">个人词库</p>
-            <h1>{selected ? selected.word : '生词本'}</h1>
+            <h1 lang={selected ? 'en' : undefined}>{selected ? selected.word : '生词本'}</h1>
           </div>
           <div className="header-actions">
-            <div className={`queue-control ${queueStatus.paused ? 'paused' : ''}`}>
+            <div className={`queue-control ${queueStatus.paused ? 'paused' : ''}`} role="status" aria-live="polite">
               <span>
                 {queueStatus.paused
                   ? `AI 已暂停 · ${queueStatus.pending} 项待处理`
@@ -229,7 +306,7 @@ export default function App(): ReactElement {
                 {queueStatus.paused ? <Play size={14} /> : <Pause size={14} />}
               </button>
             </div>
-            <button className="primary-button" onClick={() => setAddOpen(true)}>
+            <button className="primary-button" onClick={() => setAddOpen(true)} aria-keyshortcuts="Control+N">
               <Plus size={18} /> 添加单词
             </button>
           </div>
@@ -242,6 +319,7 @@ export default function App(): ReactElement {
               isTrash={collectionView === 'trash'}
               onChanged={() => void load()}
               onToast={showToast}
+              onDirtyChange={setDetailDirty}
             />
           ) : (
             <WelcomeEmpty onAdd={() => setAddOpen(true)} />
@@ -261,9 +339,67 @@ export default function App(): ReactElement {
         }}
         onToast={showToast}
       />}
+      {categoryOpen && <CategoryDialog
+        color={CATEGORY_COLORS[categories.length % CATEGORY_COLORS.length]}
+        onClose={() => setCategoryOpen(false)}
+        onCreate={createCategory}
+      />}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} onToast={showToast} />}
-      {toast && <div className={`toast ${toast.kind}`} role="status">{toast.kind === 'error' ? <CircleAlert size={18} /> : <Check size={18} />}{toast.message}</div>}
-    </main>
+      {toast && <div className={`toast ${toast.kind}`} role="status" aria-live="polite">{toast.kind === 'error' ? <CircleAlert size={18} /> : <Check size={18} />}{toast.message}</div>}
+      </main>
+    </div>
+  )
+}
+
+function TitleBar({
+  theme,
+  themeOpen,
+  maximized,
+  onToggleTheme,
+  onSelectTheme,
+  onMinimize,
+  onToggleMaximize,
+  onClose
+}: {
+  theme: VisualTheme
+  themeOpen: boolean
+  maximized: boolean
+  onToggleTheme: () => void
+  onSelectTheme: (theme: VisualTheme) => void
+  onMinimize: () => void
+  onToggleMaximize: () => void
+  onClose: () => void
+}): ReactElement {
+  const themeSwitcherRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!themeOpen) return
+    const closeOnOutsideClick = (event: MouseEvent): void => {
+      if (!themeSwitcherRef.current?.contains(event.target as Node)) onToggleTheme()
+    }
+    window.addEventListener('pointerdown', closeOnOutsideClick)
+    return () => window.removeEventListener('pointerdown', closeOnOutsideClick)
+  }, [onToggleTheme, themeOpen])
+
+  return (
+    <header className="titlebar" onDoubleClick={(event) => {
+      if (!(event.target as HTMLElement).closest('button')) onToggleMaximize()
+    }}>
+      <div className="titlebar-brand"><span className="titlebar-mark"><BookOpen size={15} /></span><span>生词本</span></div>
+      <div className="titlebar-spacer" />
+      <div ref={themeSwitcherRef} className="theme-switcher" onDoubleClick={(event) => event.stopPropagation()}>
+        <button className="theme-trigger" onClick={onToggleTheme} aria-expanded={themeOpen} aria-haspopup="menu"><Palette size={15} /><span>{THEME_OPTIONS.find((option) => option.id === theme)?.name}</span></button>
+        {themeOpen && <div className="theme-menu" role="menu" aria-label="选择界面风格">
+          <div className="theme-menu-heading"><strong>界面风格</strong><span>即时切换并自动记住</span></div>
+          {THEME_OPTIONS.map((option) => <button key={option.id} className={`theme-option ${theme === option.id ? 'active' : ''}`} role="menuitemradio" aria-checked={theme === option.id} onClick={() => onSelectTheme(option.id)}><span className={`theme-preview ${option.id}`}><i /><i /><i /></span><span><strong>{option.name}</strong><small>{option.description}</small></span>{theme === option.id && <Check size={15} />}</button>)}
+        </div>}
+      </div>
+      <div className="window-controls">
+        <button onClick={onMinimize} aria-label="最小化"><Minus size={16} /></button>
+        <button onClick={onToggleMaximize} aria-label={maximized ? '还原窗口' : '最大化窗口'}>{maximized ? <SquareStack size={14} /> : <Maximize2 size={14} />}</button>
+        <button className="window-close" onClick={onClose} aria-label="关闭"><X size={17} /></button>
+      </div>
+    </header>
   )
 }
 
@@ -291,19 +427,15 @@ function Sidebar({
   const total = categories.reduce((sum, category) => sum + category.wordCount, 0)
   return (
     <aside className="sidebar">
-      <div className="brand-lockup">
-        <span className="brand-mark"><BookOpen size={21} /></span>
-        <span>生词本</span>
-      </div>
       <nav className="side-nav" aria-label="词库导航">
-        <button className={`side-nav-item ${collectionView === 'active' && !selectedCategoryId ? 'active' : ''}`} onClick={onShowAll}>
+        <button className={`side-nav-item ${collectionView === 'active' && !selectedCategoryId ? 'active' : ''}`} onClick={onShowAll} aria-current={collectionView === 'active' && !selectedCategoryId ? 'page' : undefined}>
           <span><BookOpen size={17} /> 全部单词</span><b>{total}</b>
         </button>
         <div className="sidebar-section-heading"><span>分类</span><button className="icon-button compact" onClick={onCreateCategory} aria-label="新建分类"><FolderPlus size={16} /></button></div>
         <div className="category-list">
           {categories.map((category) => (
             <div className={`category-item ${collectionView === 'active' && selectedCategoryId === category.id ? 'active' : ''}`} key={category.id}>
-              <button onClick={() => onSelectCategory(category.id)}>
+              <button onClick={() => onSelectCategory(category.id)} aria-current={collectionView === 'active' && selectedCategoryId === category.id ? 'page' : undefined}>
                 <span><i style={{ background: category.color }} /><span>{category.name}</span></span><b>{category.wordCount}</b>
               </button>
               {category.id !== 'uncategorized' && <button className="category-delete" onClick={() => onDeleteCategory(category)} aria-label={`删除分类 ${category.name}`}><X size={13} /></button>}
@@ -312,7 +444,7 @@ function Sidebar({
         </div>
       </nav>
       <div className="sidebar-footer">
-        <button className={`side-nav-item ${collectionView === 'trash' ? 'active' : ''}`} onClick={onShowTrash}><span><Trash2 size={17} /> 回收站</span></button>
+        <button className={`side-nav-item ${collectionView === 'trash' ? 'active' : ''}`} onClick={onShowTrash} aria-current={collectionView === 'trash' ? 'page' : undefined}><span><Trash2 size={17} /> 回收站</span></button>
         <button className="side-nav-item" onClick={onOpenSettings}><span><Settings size={17} /> 设置</span></button>
       </div>
     </aside>
@@ -322,9 +454,9 @@ function Sidebar({
 function WordRow({ entry, selected, onClick }: { entry: WordEntry; selected: boolean; onClick: () => void }): ReactElement {
   const definition = entry.senses[0]?.definitionZh || (entry.status === 'pending' ? '等待 AI 补全…' : '尚未填写释义')
   return (
-    <button className={`word-row ${selected ? 'selected' : ''}`} onClick={onClick}>
-      <span className="word-row-main"><strong>{entry.word}</strong><em>{entry.ipaUk ? `/${entry.ipaUk.replace(/^\/+|\/+$/g, '')}/` : '—'}</em></span>
-      <span className="word-row-definition">{definition}</span>
+    <button className={`word-row ${selected ? 'selected' : ''}`} onClick={onClick} aria-pressed={selected}>
+      <span className="word-row-main"><strong lang="en" title={entry.word}>{entry.word}</strong><em lang="en">{entry.ipaUk ? `/${entry.ipaUk.replace(/^\/+|\/+$/g, '')}/` : '—'}</em></span>
+      <span className="word-row-definition" title={definition}>{definition}</span>
       <span className="word-row-footer"><StatusBadge status={entry.status} /><span className="row-category"><i style={{ background: entry.categoryColor }} />{entry.categoryName}</span></span>
     </button>
   )
@@ -334,10 +466,15 @@ function StatusBadge({ status }: { status: EnrichmentStatus }): ReactElement {
   return <span className={`status-badge ${statusTone[status]}`}>{status === 'processing' && <LoaderCircle size={12} className="spin" />}{statusCopy[status]}</span>
 }
 
-function WordDetail({ entry, categories, isTrash, onChanged, onToast }: { entry: WordEntry; categories: Category[]; isTrash: boolean; onChanged: () => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
+function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyChange }: { entry: WordEntry; categories: Category[]; isTrash: boolean; onChanged: () => void; onToast: (kind: 'success' | 'error', message: string) => void; onDirtyChange: (dirty: boolean) => void }): ReactElement {
   const [draft, setDraft] = useState<WordDraft>(() => asDraft(entry))
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    onDirtyChange(dirty)
+    return () => onDirtyChange(false)
+  }, [dirty, onDirtyChange])
 
   useEffect(() => {
     if (draft.id !== entry.id || !dirty) {
@@ -416,8 +553,8 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast }: { entry:
       {entry.aiError && <div className="inline-alert"><CircleAlert size={17} /><span>{entry.aiError}</span><button onClick={() => void retry()}><RefreshCw size={14} />重试</button></div>}
 
       <section className="form-section word-heading-section">
-        <label>单词<input value={draft.word} onChange={(event) => editDraft({ ...draft, word: event.target.value })} /></label>
-        <label>英式 IPA<input value={draft.ipaUk} onChange={(event) => editDraft({ ...draft, ipaUk: event.target.value })} placeholder="例如 ˈvɒkəbjəlri" /></label>
+        <label>单词<input className="latin-field" lang="en" value={draft.word} onChange={(event) => editDraft({ ...draft, word: event.target.value })} /></label>
+        <label>英式 IPA<input className="latin-field" lang="en" value={draft.ipaUk} onChange={(event) => editDraft({ ...draft, ipaUk: event.target.value })} placeholder="例如 ˈvɒkəbjəlri" /></label>
       </section>
 
       <section className="form-section">
@@ -425,8 +562,8 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast }: { entry:
         <div className="sense-stack">
           {draft.senses.map((sense, index) => (
             <div className="sense-row" key={`${entry.id}-${index}`}>
-              <input value={sense.partOfSpeech} onChange={(event) => editDraft({ ...draft, senses: replaceSense(draft.senses, index, { ...sense, partOfSpeech: event.target.value }) })} placeholder="词性，如 noun" aria-label="词性" />
-              <input value={sense.definitionZh} onChange={(event) => editDraft({ ...draft, senses: replaceSense(draft.senses, index, { ...sense, definitionZh: event.target.value }) })} placeholder="中文释义" aria-label="中文释义" />
+              <input className="latin-field" value={sense.partOfSpeech} onChange={(event) => editDraft({ ...draft, senses: replaceSense(draft.senses, index, { ...sense, partOfSpeech: event.target.value }) })} placeholder="词性，如 noun" aria-label="词性" />
+              <input className="reading-field" value={sense.definitionZh} onChange={(event) => editDraft({ ...draft, senses: replaceSense(draft.senses, index, { ...sense, definitionZh: event.target.value }) })} placeholder="中文释义" aria-label="中文释义" />
               <button className="icon-button compact" onClick={() => editDraft({ ...draft, senses: draft.senses.length > 1 ? draft.senses.filter((_, itemIndex) => itemIndex !== index) : [blankSense()] })} aria-label="删除义项"><X size={15} /></button>
             </div>
           ))}
@@ -444,7 +581,7 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast }: { entry:
 
       <section className="form-section roots-section">
         <div className="section-title"><div><p className="eyebrow">词源</p><h2>词根关联</h2></div><span className="source-label">来自本地辞典</span></div>
-        {entry.rootMatches.length ? <div className="root-grid">{entry.rootMatches.map((match) => <button className="root-card" key={`${match.root}-${match.sourceAnchor}`} onClick={() => void window.api.roots.openSource(match.sourceAnchor)}><span className="root-card-top"><code>{match.root}</code><ExternalLink size={14} /></span><strong>{match.meaning}</strong>{match.formationNote && <p>{match.formationNote}</p>}<small>{match.matchedVia === 'lemma' ? '按原形匹配 · ' : ''}{match.sourceLabel}</small></button>)}</div> : <div className="root-empty"><Tag size={17} />该辞典暂未找到可核实的词根。</div>}
+        {entry.rootMatches.length ? <div className="root-grid">{entry.rootMatches.map((match) => <button className="root-card" key={`${match.root}-${match.sourceAnchor}`} onClick={() => void window.api.roots.openSource(match.sourceAnchor)} aria-label={`在本地辞典中查看词根 ${match.root}`}><span className="root-card-top"><code lang="en">{match.root}</code><ExternalLink size={14} /></span><strong>{match.meaning}</strong>{match.formationNote && <p>{match.formationNote}</p>}<small>{match.matchedVia === 'lemma' ? '按原形匹配 · ' : ''}{match.sourceLabel}</small></button>)}</div> : <div className="root-empty"><Tag size={17} />该辞典暂未找到可核实的词根。</div>}
       </section>
 
       <section className="form-section review-section">
@@ -458,6 +595,9 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast }: { entry:
 function AddWordDialog({ onClose, onCreated, onToast }: { onClose: () => void; onCreated: (result: WordCreateResult) => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
   const [word, setWord] = useState('')
   const [creating, setCreating] = useState(false)
+  const requestClose = (): void => {
+    if (!word.trim() || window.confirm('放弃尚未加入词库的单词？')) onClose()
+  }
   const create = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
     setCreating(true)
@@ -471,27 +611,69 @@ function AddWordDialog({ onClose, onCreated, onToast }: { onClose: () => void; o
       setCreating(false)
     }
   }
-  return <Dialog title="添加单词" onClose={onClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">先收下单词；本地 AI 准备好后会自动补全 IPA、释义、分类建议和标签。</p><label>英文单词<input autoFocus value={word} onChange={(event) => setWord(event.target.value)} placeholder="例如 vocabulary" /></label><div className="dialog-actions"><button type="button" className="text-button" onClick={onClose}>取消</button><button className="primary-button" disabled={creating}>{creating ? <LoaderCircle size={17} className="spin" /> : <Sparkles size={17} />}加入队列</button></div></form></Dialog>
+  return <Dialog title="添加单词" onClose={requestClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">先收下单词；本地 AI 准备好后会自动补全 IPA、释义、分类建议和标签。</p><label>英文单词<input className="latin-field" lang="en" autoFocus data-initial-focus value={word} onChange={(event) => setWord(event.target.value)} placeholder="例如 vocabulary" /></label><div className="dialog-actions"><button type="button" className="text-button" onClick={requestClose}>取消</button><button className="primary-button" disabled={creating || !word.trim()}>{creating ? <LoaderCircle size={17} className="spin" /> : <Sparkles size={17} />}加入队列</button></div></form></Dialog>
+}
+
+function CategoryDialog({ color, onClose, onCreate }: { color: string; onClose: () => void; onCreate: (name: string) => Promise<void> }): ReactElement {
+  const [name, setName] = useState('')
+  const [creating, setCreating] = useState(false)
+  const requestClose = (): void => {
+    if (!name.trim() || window.confirm('放弃尚未创建的分类？')) onClose()
+  }
+  const create = async (event: FormEvent): Promise<void> => {
+    event.preventDefault()
+    if (!name.trim()) return
+    setCreating(true)
+    try {
+      await onCreate(name.trim())
+    } finally {
+      setCreating(false)
+    }
+  }
+  return <Dialog title="新建分类" onClose={requestClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">分类负责整理主线主题；更细的交叉关系可以继续使用标签。</p><label>分类名称<input autoFocus data-initial-focus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 学术写作" /></label><div className="category-preview"><span className="category-preview-dot" style={{ background: color }} /><span>{name.trim() || '新分类'}</span></div><div className="dialog-actions"><button type="button" className="text-button" onClick={requestClose}>取消</button><button className="primary-button" disabled={creating || !name.trim()}>{creating ? <LoaderCircle size={17} className="spin" /> : <FolderPlus size={17} />}创建分类</button></div></form></Dialog>
 }
 
 function SettingsDialog({ onClose, onToast }: { onClose: () => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [initialSettings, setInitialSettings] = useState<AppSettings | null>(null)
   const [ollama, setOllama] = useState<OllamaStatus | null>(null)
   const [rootStatus, setRootStatus] = useState<RootIndexStatus | null>(null)
   const [saving, setSaving] = useState(false)
+  const [checking, setChecking] = useState(false)
 
-  const reload = async (): Promise<void> => {
+  const load = async (): Promise<void> => {
     try {
-      const [nextSettings, nextOllama, nextRoot] = await Promise.all([window.api.settings.get(), window.api.ollama.check(), window.api.roots.status()])
+      const [nextSettings, nextRoot] = await Promise.all([window.api.settings.get(), window.api.roots.status()])
       setSettings(nextSettings)
-      setOllama(nextOllama)
+      setInitialSettings(nextSettings)
       setRootStatus(nextRoot)
+      setChecking(true)
+      setOllama(await window.api.ollama.check(nextSettings.ollamaUrl))
     } catch (error) {
       onToast('error', messageOf(error))
+    } finally {
+      setChecking(false)
     }
   }
 
-  useEffect(() => { void reload() }, [])
+  useEffect(() => { void load() }, [])
+
+  const checkConnection = async (): Promise<void> => {
+    if (!settings) return
+    setChecking(true)
+    try {
+      setOllama(await window.api.ollama.check(settings.ollamaUrl))
+    } catch (error) {
+      onToast('error', messageOf(error))
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const requestClose = (): void => {
+    const dirty = settings && initialSettings && JSON.stringify(settings) !== JSON.stringify(initialSettings)
+    if (!dirty || window.confirm('放弃尚未保存的设置？')) onClose()
+  }
 
   const save = async (): Promise<void> => {
     if (!settings) return
@@ -499,12 +681,15 @@ function SettingsDialog({ onClose, onToast }: { onClose: () => void; onToast: (k
     try {
       const saved = await window.api.settings.save(settings)
       setSettings(saved)
+      setInitialSettings(saved)
       onToast('success', '设置已保存。')
-      await reload()
+      setChecking(true)
+      setOllama(await window.api.ollama.check(saved.ollamaUrl))
     } catch (error) {
       onToast('error', messageOf(error))
     } finally {
       setSaving(false)
+      setChecking(false)
     }
   }
 
@@ -516,7 +701,9 @@ function SettingsDialog({ onClose, onToast }: { onClose: () => void; onToast: (k
   const rebuildIndex = async (): Promise<void> => {
     if (!settings) return
     try {
-      await window.api.settings.save(settings)
+      const saved = await window.api.settings.save(settings)
+      setSettings(saved)
+      setInitialSettings(saved)
       const nextStatus = await window.api.roots.rebuild()
       setRootStatus(nextStatus)
       onToast('success', nextStatus.message)
@@ -534,23 +721,66 @@ function SettingsDialog({ onClose, onToast }: { onClose: () => void; onToast: (k
     }
   }
 
-  return <Dialog title="设置" onClose={onClose} wide>{!settings ? <ListLoading /> : <div className="settings-stack">
-    <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h3>本地 AI</h3><p>{ollama?.message ?? '正在检查 Ollama…'}</p></div><span className={`connection-dot ${ollama?.available ? 'online' : ''}`} /></div><label>Ollama 地址<input value={settings.ollamaUrl} onChange={(event) => setSettings({ ...settings, ollamaUrl: event.target.value })} /></label><label>默认模型<select value={settings.ollamaModel} onChange={(event) => setSettings({ ...settings, ollamaModel: event.target.value })}><option value="">自动选择第一个可用模型</option>{ollama?.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><button className="outline-button" onClick={() => void reload()}><RefreshCw size={15} />重新检测</button></section>
+  return <Dialog title="设置" onClose={requestClose} wide>{!settings ? <ListLoading /> : <div className="settings-stack">
+    <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h3>本地 AI</h3><p>{checking ? '正在检查 Ollama…' : ollama?.message ?? '尚未检测 Ollama。'}</p></div><span className={`connection-dot ${ollama?.available ? 'online' : ''}`} /></div><label>Ollama 地址<input className="latin-field" value={settings.ollamaUrl} onChange={(event) => setSettings({ ...settings, ollamaUrl: event.target.value })} /></label><label>默认模型<select value={settings.ollamaModel} onChange={(event) => setSettings({ ...settings, ollamaModel: event.target.value })}><option value="">自动选择第一个可用模型</option>{ollama?.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><button className="outline-button" disabled={checking} onClick={() => void checkConnection()}>{checking ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}重新检测当前地址</button></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Database size={18} /></span><div><h3>词根辞典</h3><p>{rootStatus?.message ?? '正在读取索引状态…'}</p></div></div><label>HTML 文件<input value={settings.dictionaryPath} onChange={(event) => setSettings({ ...settings, dictionaryPath: event.target.value })} /></label><div className="setting-buttons"><button className="outline-button" onClick={() => void chooseDictionary()}>选择文件</button><button className="outline-button" onClick={() => void rebuildIndex()}><RefreshCw size={15} />重建索引{rootStatus?.ready ? ` · ${rootStatus.indexedWords} 词` : ''}</button></div></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><FileDown size={18} /></span><div><h3>数据与备份</h3><p>数据库每小时检查跨日备份，保留最近 7 份。</p></div></div><div className="setting-buttons"><button className="outline-button" onClick={() => void window.api.data.openFolder()}>打开数据目录</button><button className="outline-button" onClick={() => void exportData('json')}>导出 JSON</button><button className="outline-button" onClick={() => void exportData('csv')}>导出 CSV</button><button className="outline-button" onClick={() => void exportData('sqlite')}>导出 SQLite</button></div></section>
-    <div className="dialog-actions"><button className="text-button" onClick={onClose}>关闭</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle size={17} className="spin" /> : <Check size={17} />}保存设置</button></div>
+    <div className="dialog-actions"><button className="text-button" onClick={requestClose}>关闭</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle size={17} className="spin" /> : <Check size={17} />}保存设置</button></div>
   </div>}</Dialog>
 }
 
 function Dialog({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }): ReactElement {
+  const dialogRef = useRef<HTMLElement>(null)
+  const closeRef = useRef(onClose)
+  const titleId = useId()
+
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
+    closeRef.current = onClose
   }, [onClose])
-  return <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}><section className={`dialog ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}><header><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>{children}</section></div>
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const dialog = dialogRef.current
+    const focusableSelector = 'button:not(:disabled), input:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+    const focusFirst = (): void => {
+      const preferred = dialog?.querySelector<HTMLElement>('[data-initial-focus]') ?? dialog?.querySelector<HTMLElement>('input:not(:disabled), select:not(:disabled)') ?? dialog?.querySelector<HTMLElement>(focusableSelector)
+      ;(preferred ?? dialog)?.focus({ preventScroll: true })
+    }
+    focusFirst()
+    const focusFrame = window.requestAnimationFrame(focusFirst)
+    const focusTimer = window.setTimeout(focusFirst, 50)
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeRef.current()
+        return
+      }
+      if (event.key !== 'Tab' || !dialog) return
+      const focusable = [...dialog.querySelectorAll<HTMLElement>(focusableSelector)].filter((element) => element.offsetParent !== null)
+      if (!focusable.length) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.clearTimeout(focusTimer)
+      window.cancelAnimationFrame(focusFrame)
+      window.removeEventListener('keydown', handleKeyDown)
+      previousFocus?.focus()
+    }
+  }, [])
+  return <div className="dialog-backdrop" role="presentation"><section ref={dialogRef} className={`dialog ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}><header><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>{children}</section></div>
 }
 
 function ListLoading(): ReactElement { return <div className="list-loading"><LoaderCircle size={20} className="spin" />正在读取词库…</div> }
@@ -559,4 +789,12 @@ function WelcomeEmpty({ onAdd }: { onAdd: () => void }): ReactElement { return <
 
 function asDraft(entry: WordEntry): WordDraft { return { id: entry.id, word: entry.word, ipaUk: entry.ipaUk, senses: entry.senses.length ? entry.senses : [blankSense()], categoryId: entry.categoryId, tagNames: entry.tags.map((tag) => tag.name), aiReviewed: entry.aiReviewed } }
 function replaceSense(senses: WordSense[], index: number, replacement: WordSense): WordSense[] { return senses.map((sense, itemIndex) => (itemIndex === index ? replacement : sense)) }
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delay)
+    return () => window.clearTimeout(timer)
+  }, [delay, value])
+  return debounced
+}
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : '发生了未知错误。' }

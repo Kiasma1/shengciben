@@ -17,6 +17,13 @@ import type {
 declare global {
   interface Window {
     api: {
+      window: {
+        isMaximized: () => Promise<boolean>
+        minimize: () => void
+        toggleMaximize: () => void
+        close: () => void
+        onMaximizedChanged: (listener: (maximized: boolean) => void) => () => void
+      }
       words: {
         list: (filters: WordFilters) => Promise<WordEntry[]>
         get: (id: string) => Promise<WordEntry | null>
@@ -35,7 +42,7 @@ declare global {
         get: () => Promise<AppSettings>
         save: (settings: AppSettings) => Promise<AppSettings>
       }
-      ollama: { check: () => Promise<OllamaStatus> }
+      ollama: { check: (url?: string) => Promise<OllamaStatus> }
       queue: {
         status: () => Promise<QueueStatus>
         setPaused: (paused: boolean) => Promise<QueueStatus>

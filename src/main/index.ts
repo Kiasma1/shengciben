@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import path from 'node:path'
 import { existsSync, mkdirSync, promises as fs, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { AiProviderRegistry, OllamaProvider } from './ai-provider'
@@ -40,6 +40,8 @@ function createWindow(): void {
     minWidth: 1080,
     minHeight: 680,
     title: '生词本',
+    frame: false,
+    autoHideMenuBar: true,
     backgroundColor: '#fcfaf5',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -52,6 +54,8 @@ function createWindow(): void {
   windowRef.on('closed', () => {
     windowRef = null
   })
+  windowRef.on('maximize', () => windowRef?.webContents.send('window:maximized-changed', true))
+  windowRef.on('unmaximize', () => windowRef?.webContents.send('window:maximized-changed', false))
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void windowRef.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -87,6 +91,15 @@ function stopBackupSchedule(): void {
 }
 
 function setupIpc(): void {
+  ipcMain.handle('window:is-maximized', (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false)
+  ipcMain.on('window:minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize())
+  ipcMain.on('window:toggle-maximize', (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender)
+    if (!target) return
+    if (target.isMaximized()) target.unmaximize()
+    else target.maximize()
+  })
+  ipcMain.on('window:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close())
   ipcMain.handle('words:list', (_event, filters: WordFilters) => database.listWords(filters))
   ipcMain.handle('words:get', (_event, id: string) => database.getWord(id))
   ipcMain.handle('words:create', (_event, word: string) => {
@@ -129,9 +142,9 @@ function setupIpc(): void {
     void processor.processNext()
     return saved
   })
-  ipcMain.handle('ollama:check', () => {
+  ipcMain.handle('ollama:check', (_event, url?: string) => {
     const settings = database.getSettings()
-    return providers.get('ollama').check(settings)
+    return providers.get('ollama').check({ ...settings, ollamaUrl: url?.trim() || settings.ollamaUrl })
   })
   ipcMain.handle('queue:status', () => processor.getStatus())
   ipcMain.handle('queue:set-paused', (_event, paused: boolean) => processor.setPaused(paused))
@@ -188,6 +201,7 @@ function setupIpc(): void {
 
 app.whenReady().then(async () => {
   app.setName('生词本')
+  Menu.setApplicationMenu(null)
   database = new AppDatabase(app.getPath('userData'))
   rootIndexer = new RootIndexer(database.directory)
   providers = new AiProviderRegistry([new OllamaProvider()])
