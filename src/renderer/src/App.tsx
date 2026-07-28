@@ -144,6 +144,34 @@ export default function App(): ReactElement {
   }, [])
 
   useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    const updateReflection = (event: PointerEvent): void => {
+      if (!(event.target instanceof Element)) return
+      const control = event.target.closest<HTMLElement>('.primary-button, .outline-button')
+      if (!control) return
+      const bounds = control.getBoundingClientRect()
+      control.style.setProperty('--glass-pointer-x', `${((event.clientX - bounds.left) / bounds.width) * 100}%`)
+      control.style.setProperty('--glass-pointer-y', `${((event.clientY - bounds.top) / bounds.height) * 100}%`)
+    }
+
+    const resetReflection = (event: PointerEvent): void => {
+      if (!(event.target instanceof Element)) return
+      const control = event.target.closest<HTMLElement>('.primary-button, .outline-button')
+      if (!control || (event.relatedTarget instanceof Node && control.contains(event.relatedTarget))) return
+      control.style.removeProperty('--glass-pointer-x')
+      control.style.removeProperty('--glass-pointer-y')
+    }
+
+    document.addEventListener('pointermove', updateReflection)
+    document.addEventListener('pointerout', resetReflection)
+    return () => {
+      document.removeEventListener('pointermove', updateReflection)
+      document.removeEventListener('pointerout', resetReflection)
+    }
+  }, [])
+
+  useEffect(() => {
     void window.api.window.isMaximized().then(setMaximized)
     return window.api.window.onMaximizedChanged(setMaximized)
   }, [])
