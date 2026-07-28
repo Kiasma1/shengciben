@@ -268,6 +268,10 @@ export class AppDatabase {
     this.db.prepare(`UPDATE words SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE id = ?`).run(now(), id)
   }
 
+  emptyTrash(): number {
+    return this.db.prepare(`DELETE FROM words WHERE is_deleted = 1`).run().changes
+  }
+
   listCategories(): Category[] {
     return this.db
       .prepare(`

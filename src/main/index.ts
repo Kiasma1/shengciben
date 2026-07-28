@@ -123,6 +123,11 @@ function setupIpc(): void {
     database.restoreWord(id)
     notifyChanged()
   })
+  ipcMain.handle('words:empty-trash', () => {
+    const deletedCount = database.emptyTrash()
+    notifyChanged()
+    return deletedCount
+  })
   ipcMain.handle('categories:list', () => database.listCategories())
   ipcMain.handle('categories:create', (_event, name: string, color: string) => {
     const category = database.createCategory(name, color)

@@ -231,6 +231,17 @@ export default function App(): ReactElement {
     }
   }
 
+  const emptyTrash = async (): Promise<void> => {
+    if (!window.confirm('永久删除回收站中的全部单词？释义、标签关系、词根匹配和 AI 任务也会一并删除，且无法撤销。')) return
+    try {
+      const deletedCount = await window.api.words.emptyTrash()
+      setSelectedId(null)
+      showToast('success', deletedCount ? `已永久删除 ${deletedCount} 个单词。` : '回收站已经是空的。')
+    } catch (error) {
+      showToast('error', messageOf(error))
+    }
+  }
+
   const closeWindow = (): void => {
     if (!detailDirty || window.confirm('当前单词有尚未保存的修改，仍要关闭生词本吗？')) window.api.window.close()
   }
@@ -306,27 +317,35 @@ export default function App(): ReactElement {
       <section id="word-detail" className="detail-column" aria-label="单词详情" tabIndex={-1}>
         <header className="detail-header">
           <div>
-            <p className="eyebrow">个人词库</p>
-            <h1 lang={selected ? 'en' : undefined}>{selected ? selected.word : '生词本'}</h1>
+            <p className="eyebrow">{collectionView === 'trash' ? '回收站' : '个人词库'}</p>
+            <h1 lang={selected ? 'en' : undefined}>{selected ? selected.word : collectionView === 'trash' ? '已删除的单词' : '生词本'}</h1>
           </div>
           <div className="header-actions">
-            <div className={`queue-control ${queueStatus.paused ? 'paused' : ''}`} role="status" aria-live="polite">
-              <span>
-                {queueStatus.paused
-                  ? `AI 已暂停 · ${queueStatus.pending} 项待处理`
-                  : queueStatus.processing
-                    ? `AI 处理中 · ${queueStatus.pending} 项等待`
-                    : queueStatus.pending
-                      ? `${queueStatus.pending} 项等待 AI`
-                      : 'AI 队列空闲'}
-              </span>
-              <button className="icon-button compact" onClick={() => void toggleQueue()} aria-label={queueStatus.paused ? '继续 AI 队列' : '暂停 AI 队列'}>
-                {queueStatus.paused ? <Play size={14} /> : <Pause size={14} />}
+            {collectionView === 'trash' ? (
+              <button className="primary-button empty-trash-button" disabled={isLoading || (!query.trim() && statusFilter === 'all' && entries.length === 0)} onClick={() => void emptyTrash()} aria-label="永久删除回收站中的全部单词">
+                <Trash2 size={17} /> 清空回收站
               </button>
-            </div>
-            <button className="primary-button" onClick={() => setAddOpen(true)} aria-keyshortcuts="Control+N">
-              <Plus size={18} /> 添加单词
-            </button>
+            ) : (
+              <>
+                <div className={`queue-control ${queueStatus.paused ? 'paused' : ''}`} role="status" aria-live="polite">
+                  <span>
+                    {queueStatus.paused
+                      ? `AI 已暂停 · ${queueStatus.pending} 项待处理`
+                      : queueStatus.processing
+                        ? `AI 处理中 · ${queueStatus.pending} 项等待`
+                        : queueStatus.pending
+                          ? `${queueStatus.pending} 项等待 AI`
+                          : 'AI 队列空闲'}
+                  </span>
+                  <button className="icon-button compact" onClick={() => void toggleQueue()} aria-label={queueStatus.paused ? '继续 AI 队列' : '暂停 AI 队列'}>
+                    {queueStatus.paused ? <Play size={14} /> : <Pause size={14} />}
+                  </button>
+                </div>
+                <button className="primary-button" onClick={() => setAddOpen(true)} aria-keyshortcuts="Control+N">
+                  <Plus size={18} /> 添加单词
+                </button>
+              </>
+            )}
           </div>
         </header>
         <div className="detail-scroll">
@@ -339,6 +358,8 @@ export default function App(): ReactElement {
               onToast={showToast}
               onDirtyChange={setDetailDirty}
             />
+          ) : collectionView === 'trash' ? (
+            <TrashEmpty />
           ) : (
             <WelcomeEmpty onAdd={() => setAddOpen(true)} />
           )}
@@ -780,6 +801,8 @@ function Dialog({ title, motionState, onClose, children, wide = false }: { title
 function ListLoading(): ReactElement { return <div className="list-loading"><LoaderCircle size={20} className="spin" />正在读取词库…</div> }
 function ListEmpty({ view, query }: { view: CollectionView; query: string }): ReactElement { return <div className="list-empty">{view === 'trash' ? <Trash2 size={24} /> : <Search size={24} />}<strong>{view === 'trash' ? '回收站是空的' : query ? '没有匹配的单词' : '还没有单词'}</strong><span>{view === 'trash' ? '被移除的单词会先保存在这里。' : query ? '换个关键词试试。' : '点击右上角“添加单词”开始建立词库。'}</span></div> }
 function WelcomeEmpty({ onAdd }: { onAdd: () => void }): ReactElement { return <div className="empty-detail"><span className="empty-emblem"><BookOpen size={30} /></span><h2>从第一个单词开始</h2><p>先把不熟悉的词收进来；AI 与词根索引会在后台慢慢替你补全。</p><button className="primary-button" onClick={onAdd}><Plus size={17} />添加单词</button></div> }
+
+function TrashEmpty(): ReactElement { return <div className="empty-detail"><span className="empty-emblem"><Trash2 size={28} /></span><h2>回收站是空的</h2><p>移入回收站的单词会暂存在这里，你可以逐个恢复或一次清空。</p></div> }
 
 function asDraft(entry: WordEntry): WordDraft { return { id: entry.id, word: entry.word, ipaUk: entry.ipaUk, senses: entry.senses.length ? entry.senses : [blankSense()], categoryId: entry.categoryId, tagNames: entry.tags.map((tag) => tag.name), aiReviewed: entry.aiReviewed } }
 function replaceSense(senses: WordSense[], index: number, replacement: WordSense): WordSense[] { return senses.map((sense, itemIndex) => (itemIndex === index ? replacement : sense)) }
