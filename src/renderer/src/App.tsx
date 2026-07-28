@@ -1,5 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
-import { flushSync } from 'react-dom'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from 'react'
 import {
   ArchiveRestore,
   BookOpen,
@@ -13,7 +12,6 @@ import {
   Maximize2,
   Minus,
   Pause,
-  Palette,
   Play,
   Plus,
   RefreshCw,
@@ -43,22 +41,7 @@ type CollectionView = 'active' | 'trash'
 type Toast = { kind: 'success' | 'error'; message: string } | null
 type ToastKind = 'success' | 'error'
 type MotionState = 'open' | 'closing'
-type VisualTheme = 'paper' | 'studio' | 'nocturne' | 'redline' | 'punch' | 'aurora' | 'neon'
-type ViewTransitionDocument = Document & {
-  startViewTransition?: (update: () => void) => unknown
-}
-
-const THEME_OPTIONS: { id: VisualTheme; name: string; description: string }[] = [
-  { id: 'paper', name: '静纸', description: '暖纸、深蓝、克制' },
-  { id: 'studio', name: 'Studio', description: '冷白、高密度、专业' },
-  { id: 'nocturne', name: '夜读', description: '深色、暖金、沉浸' },
-  { id: 'redline', name: '红线排印', description: '黑白红、网格、编辑感' },
-  { id: 'punch', name: '铅块 Punch', description: '撞色、粗边、硬阴影' },
-  { id: 'aurora', name: '极光玻璃', description: '渐变、通透、柔和' },
-  { id: 'neon', name: '霓虹终端', description: '深黑、青紫、技术感' }
-]
-
-const CATEGORY_COLORS = ['#8a6b42', '#3d6b65', '#5567a4', '#9d5b6e', '#8d7048', '#527ba0']
+const CATEGORY_COLORS = ['#ff9f0a', '#30b0c7', '#5e5ce6', '#ff6482', '#ac8e68', '#0a84ff']
 
 const statusCopy: Record<EnrichmentStatus, string> = {
   pending: '待 AI 处理',
@@ -91,11 +74,6 @@ export default function App(): ReactElement {
   const [addOpen, setAddOpen] = useState(false)
   const [categoryOpen, setCategoryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [themeOpen, setThemeOpen] = useState(false)
-  const [theme, setTheme] = useState<VisualTheme>(() => {
-    const saved = window.localStorage.getItem('visual-theme')
-    return THEME_OPTIONS.some((option) => option.id === saved) ? saved as VisualTheme : 'paper'
-  })
   const [maximized, setMaximized] = useState(false)
   const [detailDirty, setDetailDirty] = useState(false)
   const [toast, setToast] = useState<Toast>(null)
@@ -151,7 +129,6 @@ export default function App(): ReactElement {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setThemeOpen(false)
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return
       if (document.querySelector('[role="dialog"]')) return
       if (event.key.toLocaleLowerCase('en-US') === 'k') {
@@ -165,12 +142,6 @@ export default function App(): ReactElement {
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
   }, [])
-
-  useLayoutEffect(() => {
-    document.documentElement.dataset.theme = theme
-    document.documentElement.style.colorScheme = theme === 'nocturne' || theme === 'neon' ? 'dark' : 'light'
-    window.localStorage.setItem('visual-theme', theme)
-  }, [theme])
 
   useEffect(() => {
     void window.api.window.isMaximized().then(setMaximized)
@@ -236,30 +207,10 @@ export default function App(): ReactElement {
     if (!detailDirty || window.confirm('当前单词有尚未保存的修改，仍要关闭生词本吗？')) window.api.window.close()
   }
 
-  const selectTheme = (nextTheme: VisualTheme): void => {
-    setThemeOpen(false)
-    if (nextTheme === theme) return
-
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const transitionDocument = document as ViewTransitionDocument
-    if (reduceMotion || !transitionDocument.startViewTransition) {
-      setTheme(nextTheme)
-      return
-    }
-
-    transitionDocument.startViewTransition(() => {
-      flushSync(() => setTheme(nextTheme))
-    })
-  }
-
   return (
     <div className="app-frame">
       <TitleBar
-        theme={theme}
-        themeOpen={themeOpen}
         maximized={maximized}
-        onToggleTheme={() => setThemeOpen((value) => !value)}
-        onSelectTheme={selectTheme}
         onMinimize={() => window.api.window.minimize()}
         onToggleMaximize={() => window.api.window.toggleMaximize()}
         onClose={closeWindow}
@@ -393,80 +344,22 @@ export default function App(): ReactElement {
 }
 
 function TitleBar({
-  theme,
-  themeOpen,
   maximized,
-  onToggleTheme,
-  onSelectTheme,
   onMinimize,
   onToggleMaximize,
   onClose
 }: {
-  theme: VisualTheme
-  themeOpen: boolean
   maximized: boolean
-  onToggleTheme: () => void
-  onSelectTheme: (theme: VisualTheme) => void
   onMinimize: () => void
   onToggleMaximize: () => void
   onClose: () => void
 }): ReactElement {
-  const themeSwitcherRef = useRef<HTMLDivElement>(null)
-  const themeTriggerRef = useRef<HTMLButtonElement>(null)
-  const themePresence = useExitPresence(themeOpen, 125)
-
-  useEffect(() => {
-    if (!themeOpen) return
-    const closeOnOutsideClick = (event: MouseEvent): void => {
-      if (!themeSwitcherRef.current?.contains(event.target as Node)) onToggleTheme()
-    }
-    window.addEventListener('pointerdown', closeOnOutsideClick)
-    return () => window.removeEventListener('pointerdown', closeOnOutsideClick)
-  }, [onToggleTheme, themeOpen])
-
-  const handleThemeMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      onToggleTheme()
-      window.requestAnimationFrame(() => themeTriggerRef.current?.focus())
-      return
-    }
-
-    if (!['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return
-    const options = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
-    if (!options.length) return
-
-    event.preventDefault()
-    const currentIndex = options.indexOf(document.activeElement as HTMLButtonElement)
-    const selectedIndex = Math.max(0, options.findIndex((option) => option.getAttribute('aria-checked') === 'true'))
-    const baseIndex = currentIndex >= 0 ? currentIndex : selectedIndex
-    const nextIndex = event.key === 'Home'
-      ? 0
-      : event.key === 'End'
-        ? options.length - 1
-        : event.key === 'ArrowDown' || event.key === 'ArrowRight'
-          ? (baseIndex + 1) % options.length
-          : (baseIndex - 1 + options.length) % options.length
-    options[nextIndex]?.focus()
-  }
-
   return (
     <header className="titlebar" onDoubleClick={(event) => {
       if (!(event.target as HTMLElement).closest('button')) onToggleMaximize()
     }}>
       <div className="titlebar-brand"><span className="titlebar-mark"><BookOpen size={15} /></span><span>生词本</span></div>
       <div className="titlebar-spacer" />
-      <div ref={themeSwitcherRef} className="theme-switcher" onDoubleClick={(event) => event.stopPropagation()}>
-        <button ref={themeTriggerRef} className="theme-trigger" onClick={onToggleTheme} aria-expanded={themeOpen} aria-haspopup="menu"><Palette size={15} /><span>{THEME_OPTIONS.find((option) => option.id === theme)?.name}</span></button>
-        {themePresence.rendered && <div className="theme-menu" data-state={themePresence.state} role="menu" aria-label="选择界面风格" aria-hidden={themePresence.state === 'closing' ? true : undefined} onKeyDown={handleThemeMenuKeyDown}>
-          <div className="theme-menu-heading"><strong>界面风格</strong><span>即时切换并自动记住</span></div>
-          {THEME_OPTIONS.map((option) => <button key={option.id} className={`theme-option ${theme === option.id ? 'active' : ''}`} role="menuitemradio" aria-checked={theme === option.id} tabIndex={theme === option.id ? 0 : -1} onClick={() => {
-            onSelectTheme(option.id)
-            window.requestAnimationFrame(() => themeTriggerRef.current?.focus())
-          }}><span className={`theme-preview ${option.id}`}><i /><i /><i /></span><span><strong>{option.name}</strong><small>{option.description}</small></span>{theme === option.id && <Check size={15} />}</button>)}
-        </div>}
-      </div>
       <div className="window-controls">
         <button onClick={onMinimize} aria-label="最小化"><Minus size={16} /></button>
         <button onClick={onToggleMaximize} aria-label={maximized ? '还原窗口' : '最大化窗口'}>{maximized ? <SquareStack size={14} /> : <Maximize2 size={14} />}</button>

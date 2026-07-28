@@ -42,7 +42,7 @@ function createWindow(): void {
     title: '生词本',
     frame: false,
     autoHideMenuBar: true,
-    backgroundColor: '#fcfaf5',
+    backgroundColor: '#eef4ff',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
