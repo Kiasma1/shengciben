@@ -4,9 +4,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { RootIndexer } from '../src/main/root-indexer.ts'
 
-const dictionaryPath =
-  process.argv[2] ??
-  'D:\\考试\\translation_codex\\english-word-roots-zh-codex\\英语词根词源分类辞典-Codex重译版.html'
+const dictionaryPath = process.argv[2]
+if (!dictionaryPath) {
+  throw new Error('请传入词根辞典 HTML 路径：npm run test:roots:random -- "<dictionary.html>"')
+}
 const html = await readFile(dictionaryPath, 'utf8')
 const textContent = (value: string): string =>
   value
