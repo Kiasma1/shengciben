@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import {
   ArchiveRestore,
   BookOpen,
@@ -42,6 +43,9 @@ type CollectionView = 'active' | 'trash'
 type Toast = { kind: 'success' | 'error'; message: string } | null
 type ToastKind = 'success' | 'error'
 type VisualTheme = 'paper' | 'studio' | 'nocturne' | 'redline' | 'punch' | 'aurora' | 'neon'
+type ViewTransitionDocument = Document & {
+  startViewTransition?: (update: () => void) => unknown
+}
 
 const THEME_OPTIONS: { id: VisualTheme; name: string; description: string }[] = [
   { id: 'paper', name: '静纸', description: '暖纸、深蓝、克制' },
@@ -155,7 +159,7 @@ export default function App(): ReactElement {
     return () => window.removeEventListener('keydown', handleShortcut)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme
     document.documentElement.style.colorScheme = theme === 'nocturne' || theme === 'neon' ? 'dark' : 'light'
     window.localStorage.setItem('visual-theme', theme)
@@ -210,6 +214,22 @@ export default function App(): ReactElement {
     if (!detailDirty || window.confirm('当前单词有尚未保存的修改，仍要关闭生词本吗？')) window.api.window.close()
   }
 
+  const selectTheme = (nextTheme: VisualTheme): void => {
+    setThemeOpen(false)
+    if (nextTheme === theme) return
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const transitionDocument = document as ViewTransitionDocument
+    if (reduceMotion || !transitionDocument.startViewTransition) {
+      setTheme(nextTheme)
+      return
+    }
+
+    transitionDocument.startViewTransition(() => {
+      flushSync(() => setTheme(nextTheme))
+    })
+  }
+
   return (
     <div className="app-frame">
       <TitleBar
@@ -217,10 +237,7 @@ export default function App(): ReactElement {
         themeOpen={themeOpen}
         maximized={maximized}
         onToggleTheme={() => setThemeOpen((value) => !value)}
-        onSelectTheme={(nextTheme) => {
-          setTheme(nextTheme)
-          setThemeOpen(false)
-        }}
+        onSelectTheme={selectTheme}
         onMinimize={() => window.api.window.minimize()}
         onToggleMaximize={() => window.api.window.toggleMaximize()}
         onClose={closeWindow}
@@ -371,6 +388,7 @@ function TitleBar({
   onClose: () => void
 }): ReactElement {
   const themeSwitcherRef = useRef<HTMLDivElement>(null)
+  const themeTriggerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!themeOpen) return
@@ -381,6 +399,33 @@ function TitleBar({
     return () => window.removeEventListener('pointerdown', closeOnOutsideClick)
   }, [onToggleTheme, themeOpen])
 
+  const handleThemeMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      onToggleTheme()
+      window.requestAnimationFrame(() => themeTriggerRef.current?.focus())
+      return
+    }
+
+    if (!['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return
+    const options = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
+    if (!options.length) return
+
+    event.preventDefault()
+    const currentIndex = options.indexOf(document.activeElement as HTMLButtonElement)
+    const selectedIndex = Math.max(0, options.findIndex((option) => option.getAttribute('aria-checked') === 'true'))
+    const baseIndex = currentIndex >= 0 ? currentIndex : selectedIndex
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? options.length - 1
+        : event.key === 'ArrowDown' || event.key === 'ArrowRight'
+          ? (baseIndex + 1) % options.length
+          : (baseIndex - 1 + options.length) % options.length
+    options[nextIndex]?.focus()
+  }
+
   return (
     <header className="titlebar" onDoubleClick={(event) => {
       if (!(event.target as HTMLElement).closest('button')) onToggleMaximize()
@@ -388,10 +433,10 @@ function TitleBar({
       <div className="titlebar-brand"><span className="titlebar-mark"><BookOpen size={15} /></span><span>生词本</span></div>
       <div className="titlebar-spacer" />
       <div ref={themeSwitcherRef} className="theme-switcher" onDoubleClick={(event) => event.stopPropagation()}>
-        <button className="theme-trigger" onClick={onToggleTheme} aria-expanded={themeOpen} aria-haspopup="menu"><Palette size={15} /><span>{THEME_OPTIONS.find((option) => option.id === theme)?.name}</span></button>
-        {themeOpen && <div className="theme-menu" role="menu" aria-label="选择界面风格">
+        <button ref={themeTriggerRef} className="theme-trigger" onClick={onToggleTheme} aria-expanded={themeOpen} aria-haspopup="menu"><Palette size={15} /><span>{THEME_OPTIONS.find((option) => option.id === theme)?.name}</span></button>
+        {themeOpen && <div className="theme-menu" role="menu" aria-label="选择界面风格" onKeyDown={handleThemeMenuKeyDown}>
           <div className="theme-menu-heading"><strong>界面风格</strong><span>即时切换并自动记住</span></div>
-          {THEME_OPTIONS.map((option) => <button key={option.id} className={`theme-option ${theme === option.id ? 'active' : ''}`} role="menuitemradio" aria-checked={theme === option.id} onClick={() => onSelectTheme(option.id)}><span className={`theme-preview ${option.id}`}><i /><i /><i /></span><span><strong>{option.name}</strong><small>{option.description}</small></span>{theme === option.id && <Check size={15} />}</button>)}
+          {THEME_OPTIONS.map((option) => <button key={option.id} className={`theme-option ${theme === option.id ? 'active' : ''}`} role="menuitemradio" aria-checked={theme === option.id} tabIndex={theme === option.id ? 0 : -1} onClick={() => onSelectTheme(option.id)}><span className={`theme-preview ${option.id}`}><i /><i /><i /></span><span><strong>{option.name}</strong><small>{option.description}</small></span>{theme === option.id && <Check size={15} />}</button>)}
         </div>}
       </div>
       <div className="window-controls">
