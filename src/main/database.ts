@@ -21,7 +21,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   aiProvider: 'ollama',
   ollamaUrl: 'http://127.0.0.1:11434',
   ollamaModel: '',
-  dictionaryPath: 'D:\\考试\\translation_codex\\english-word-roots-zh-codex\\英语词根词源分类辞典-Codex重译版.html'
+  dictionaryPath: ''
 }
 
 type WordRow = {
