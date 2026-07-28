@@ -42,6 +42,7 @@ import type {
 type CollectionView = 'active' | 'trash'
 type Toast = { kind: 'success' | 'error'; message: string } | null
 type ToastKind = 'success' | 'error'
+type MotionState = 'open' | 'closing'
 type VisualTheme = 'paper' | 'studio' | 'nocturne' | 'redline' | 'punch' | 'aurora' | 'neon'
 type ViewTransitionDocument = Document & {
   startViewTransition?: (update: () => void) => unknown
@@ -98,9 +99,15 @@ export default function App(): ReactElement {
   const [maximized, setMaximized] = useState(false)
   const [detailDirty, setDetailDirty] = useState(false)
   const [toast, setToast] = useState<Toast>(null)
+  const [toastClosing, setToastClosing] = useState(false)
   const [queueStatus, setQueueStatus] = useState<QueueStatus>({ pending: 0, processing: 0, failed: 0, paused: false })
   const searchRef = useRef<HTMLInputElement>(null)
+  const toastCloseTimerRef = useRef<number | null>(null)
+  const toastUnmountTimerRef = useRef<number | null>(null)
   const debouncedQuery = useDebouncedValue(query, 180)
+  const addPresence = useExitPresence(addOpen, 160)
+  const categoryPresence = useExitPresence(categoryOpen, 160)
+  const settingsPresence = useExitPresence(settingsOpen, 160)
 
   const filters = useMemo(
     () => ({
@@ -174,9 +181,24 @@ export default function App(): ReactElement {
     setDetailDirty(false)
   }, [selectedId])
 
+  useEffect(() => () => {
+    if (toastCloseTimerRef.current !== null) window.clearTimeout(toastCloseTimerRef.current)
+    if (toastUnmountTimerRef.current !== null) window.clearTimeout(toastUnmountTimerRef.current)
+  }, [])
+
   const showToast = (kind: ToastKind, message: string): void => {
+    if (toastCloseTimerRef.current !== null) window.clearTimeout(toastCloseTimerRef.current)
+    if (toastUnmountTimerRef.current !== null) window.clearTimeout(toastUnmountTimerRef.current)
     setToast({ kind, message })
-    window.setTimeout(() => setToast(null), 3600)
+    setToastClosing(false)
+    toastCloseTimerRef.current = window.setTimeout(() => {
+      setToastClosing(true)
+      toastCloseTimerRef.current = null
+    }, 3440)
+    toastUnmountTimerRef.current = window.setTimeout(() => {
+      setToast(null)
+      toastUnmountTimerRef.current = null
+    }, 3600)
   }
 
   const createCategory = async (name: string): Promise<void> => {
@@ -344,7 +366,8 @@ export default function App(): ReactElement {
         </div>
       </section>
 
-      {addOpen && <AddWordDialog
+      {addPresence.rendered && <AddWordDialog
+        motionState={addPresence.state}
         onClose={() => setAddOpen(false)}
         onCreated={(result) => {
           setQuery('')
@@ -356,13 +379,14 @@ export default function App(): ReactElement {
         }}
         onToast={showToast}
       />}
-      {categoryOpen && <CategoryDialog
+      {categoryPresence.rendered && <CategoryDialog
+        motionState={categoryPresence.state}
         color={CATEGORY_COLORS[categories.length % CATEGORY_COLORS.length]}
         onClose={() => setCategoryOpen(false)}
         onCreate={createCategory}
       />}
-      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} onToast={showToast} />}
-      {toast && <div className={`toast ${toast.kind}`} role="status" aria-live="polite">{toast.kind === 'error' ? <CircleAlert size={18} /> : <Check size={18} />}{toast.message}</div>}
+      {settingsPresence.rendered && <SettingsDialog motionState={settingsPresence.state} onClose={() => setSettingsOpen(false)} onToast={showToast} />}
+      {toast && <div className={`toast ${toast.kind}`} data-state={toastClosing ? 'closing' : 'open'} role="status" aria-live="polite">{toast.kind === 'error' ? <CircleAlert size={18} /> : <Check size={18} />}{toast.message}</div>}
       </main>
     </div>
   )
@@ -389,6 +413,7 @@ function TitleBar({
 }): ReactElement {
   const themeSwitcherRef = useRef<HTMLDivElement>(null)
   const themeTriggerRef = useRef<HTMLButtonElement>(null)
+  const themePresence = useExitPresence(themeOpen, 125)
 
   useEffect(() => {
     if (!themeOpen) return
@@ -434,9 +459,12 @@ function TitleBar({
       <div className="titlebar-spacer" />
       <div ref={themeSwitcherRef} className="theme-switcher" onDoubleClick={(event) => event.stopPropagation()}>
         <button ref={themeTriggerRef} className="theme-trigger" onClick={onToggleTheme} aria-expanded={themeOpen} aria-haspopup="menu"><Palette size={15} /><span>{THEME_OPTIONS.find((option) => option.id === theme)?.name}</span></button>
-        {themeOpen && <div className="theme-menu" role="menu" aria-label="选择界面风格" onKeyDown={handleThemeMenuKeyDown}>
+        {themePresence.rendered && <div className="theme-menu" data-state={themePresence.state} role="menu" aria-label="选择界面风格" aria-hidden={themePresence.state === 'closing' ? true : undefined} onKeyDown={handleThemeMenuKeyDown}>
           <div className="theme-menu-heading"><strong>界面风格</strong><span>即时切换并自动记住</span></div>
-          {THEME_OPTIONS.map((option) => <button key={option.id} className={`theme-option ${theme === option.id ? 'active' : ''}`} role="menuitemradio" aria-checked={theme === option.id} tabIndex={theme === option.id ? 0 : -1} onClick={() => onSelectTheme(option.id)}><span className={`theme-preview ${option.id}`}><i /><i /><i /></span><span><strong>{option.name}</strong><small>{option.description}</small></span>{theme === option.id && <Check size={15} />}</button>)}
+          {THEME_OPTIONS.map((option) => <button key={option.id} className={`theme-option ${theme === option.id ? 'active' : ''}`} role="menuitemradio" aria-checked={theme === option.id} tabIndex={theme === option.id ? 0 : -1} onClick={() => {
+            onSelectTheme(option.id)
+            window.requestAnimationFrame(() => themeTriggerRef.current?.focus())
+          }}><span className={`theme-preview ${option.id}`}><i /><i /><i /></span><span><strong>{option.name}</strong><small>{option.description}</small></span>{theme === option.id && <Check size={15} />}</button>)}
         </div>}
       </div>
       <div className="window-controls">
@@ -637,7 +665,7 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
   )
 }
 
-function AddWordDialog({ onClose, onCreated, onToast }: { onClose: () => void; onCreated: (result: WordCreateResult) => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
+function AddWordDialog({ motionState, onClose, onCreated, onToast }: { motionState: MotionState; onClose: () => void; onCreated: (result: WordCreateResult) => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
   const [word, setWord] = useState('')
   const [creating, setCreating] = useState(false)
   const requestClose = (): void => {
@@ -656,10 +684,10 @@ function AddWordDialog({ onClose, onCreated, onToast }: { onClose: () => void; o
       setCreating(false)
     }
   }
-  return <Dialog title="添加单词" onClose={requestClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">先收下单词；本地 AI 准备好后会自动补全 IPA、释义、分类建议和标签。</p><label>英文单词<input className="latin-field" lang="en" autoFocus data-initial-focus value={word} onChange={(event) => setWord(event.target.value)} placeholder="例如 vocabulary" /></label><div className="dialog-actions"><button type="button" className="text-button" onClick={requestClose}>取消</button><button className="primary-button" disabled={creating || !word.trim()}>{creating ? <LoaderCircle size={17} className="spin" /> : <Sparkles size={17} />}加入队列</button></div></form></Dialog>
+  return <Dialog title="添加单词" motionState={motionState} onClose={requestClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">先收下单词；本地 AI 准备好后会自动补全 IPA、释义、分类建议和标签。</p><label>英文单词<input className="latin-field" lang="en" autoFocus data-initial-focus value={word} onChange={(event) => setWord(event.target.value)} placeholder="例如 vocabulary" /></label><div className="dialog-actions"><button type="button" className="text-button" onClick={requestClose}>取消</button><button className="primary-button" disabled={creating || !word.trim()}>{creating ? <LoaderCircle size={17} className="spin" /> : <Sparkles size={17} />}加入队列</button></div></form></Dialog>
 }
 
-function CategoryDialog({ color, onClose, onCreate }: { color: string; onClose: () => void; onCreate: (name: string) => Promise<void> }): ReactElement {
+function CategoryDialog({ motionState, color, onClose, onCreate }: { motionState: MotionState; color: string; onClose: () => void; onCreate: (name: string) => Promise<void> }): ReactElement {
   const [name, setName] = useState('')
   const [creating, setCreating] = useState(false)
   const requestClose = (): void => {
@@ -675,10 +703,10 @@ function CategoryDialog({ color, onClose, onCreate }: { color: string; onClose: 
       setCreating(false)
     }
   }
-  return <Dialog title="新建分类" onClose={requestClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">分类负责整理主线主题；更细的交叉关系可以继续使用标签。</p><label>分类名称<input autoFocus data-initial-focus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 学术写作" /></label><div className="category-preview"><span className="category-preview-dot" style={{ background: color }} /><span>{name.trim() || '新分类'}</span></div><div className="dialog-actions"><button type="button" className="text-button" onClick={requestClose}>取消</button><button className="primary-button" disabled={creating || !name.trim()}>{creating ? <LoaderCircle size={17} className="spin" /> : <FolderPlus size={17} />}创建分类</button></div></form></Dialog>
+  return <Dialog title="新建分类" motionState={motionState} onClose={requestClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">分类负责整理主线主题；更细的交叉关系可以继续使用标签。</p><label>分类名称<input autoFocus data-initial-focus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 学术写作" /></label><div className="category-preview"><span className="category-preview-dot" style={{ background: color }} /><span>{name.trim() || '新分类'}</span></div><div className="dialog-actions"><button type="button" className="text-button" onClick={requestClose}>取消</button><button className="primary-button" disabled={creating || !name.trim()}>{creating ? <LoaderCircle size={17} className="spin" /> : <FolderPlus size={17} />}创建分类</button></div></form></Dialog>
 }
 
-function SettingsDialog({ onClose, onToast }: { onClose: () => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
+function SettingsDialog({ motionState, onClose, onToast }: { motionState: MotionState; onClose: () => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [initialSettings, setInitialSettings] = useState<AppSettings | null>(null)
   const [ollama, setOllama] = useState<OllamaStatus | null>(null)
@@ -766,7 +794,7 @@ function SettingsDialog({ onClose, onToast }: { onClose: () => void; onToast: (k
     }
   }
 
-  return <Dialog title="设置" onClose={requestClose} wide>{!settings ? <ListLoading /> : <div className="settings-stack">
+  return <Dialog title="设置" motionState={motionState} onClose={requestClose} wide>{!settings ? <ListLoading /> : <div className="settings-stack">
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h3>本地 AI</h3><p>{checking ? '正在检查 Ollama…' : ollama?.message ?? '尚未检测 Ollama。'}</p></div><span className={`connection-dot ${ollama?.available ? 'online' : ''}`} /></div><label>Ollama 地址<input className="latin-field" value={settings.ollamaUrl} onChange={(event) => setSettings({ ...settings, ollamaUrl: event.target.value })} /></label><label>默认模型<select value={settings.ollamaModel} onChange={(event) => setSettings({ ...settings, ollamaModel: event.target.value })}><option value="">自动选择第一个可用模型</option>{ollama?.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><button className="outline-button" disabled={checking} onClick={() => void checkConnection()}>{checking ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}重新检测当前地址</button></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Database size={18} /></span><div><h3>词根辞典</h3><p>{rootStatus?.message ?? '正在读取索引状态…'}</p></div></div><label>HTML 文件<input value={settings.dictionaryPath} onChange={(event) => setSettings({ ...settings, dictionaryPath: event.target.value })} /></label><div className="setting-buttons"><button className="outline-button" onClick={() => void chooseDictionary()}>选择文件</button><button className="outline-button" onClick={() => void rebuildIndex()}><RefreshCw size={15} />重建索引{rootStatus?.ready ? ` · ${rootStatus.indexedWords} 词` : ''}</button></div></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><FileDown size={18} /></span><div><h3>数据与备份</h3><p>数据库每小时检查跨日备份，保留最近 7 份。</p></div></div><div className="setting-buttons"><button className="outline-button" onClick={() => void window.api.data.openFolder()}>打开数据目录</button><button className="outline-button" onClick={() => void exportData('json')}>导出 JSON</button><button className="outline-button" onClick={() => void exportData('csv')}>导出 CSV</button><button className="outline-button" onClick={() => void exportData('sqlite')}>导出 SQLite</button></div></section>
@@ -774,7 +802,7 @@ function SettingsDialog({ onClose, onToast }: { onClose: () => void; onToast: (k
   </div>}</Dialog>
 }
 
-function Dialog({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }): ReactElement {
+function Dialog({ title, motionState, onClose, children, wide = false }: { title: string; motionState: MotionState; onClose: () => void; children: ReactNode; wide?: boolean }): ReactElement {
   const dialogRef = useRef<HTMLElement>(null)
   const closeRef = useRef(onClose)
   const titleId = useId()
@@ -825,7 +853,7 @@ function Dialog({ title, onClose, children, wide = false }: { title: string; onC
       previousFocus?.focus()
     }
   }, [])
-  return <div className="dialog-backdrop" role="presentation"><section ref={dialogRef} className={`dialog ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}><header><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>{children}</section></div>
+  return <div className="dialog-backdrop" data-state={motionState} role="presentation"><section ref={dialogRef} className={`dialog ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}><header><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>{children}</section></div>
 }
 
 function ListLoading(): ReactElement { return <div className="list-loading"><LoaderCircle size={20} className="spin" />正在读取词库…</div> }
@@ -834,6 +862,25 @@ function WelcomeEmpty({ onAdd }: { onAdd: () => void }): ReactElement { return <
 
 function asDraft(entry: WordEntry): WordDraft { return { id: entry.id, word: entry.word, ipaUk: entry.ipaUk, senses: entry.senses.length ? entry.senses : [blankSense()], categoryId: entry.categoryId, tagNames: entry.tags.map((tag) => tag.name), aiReviewed: entry.aiReviewed } }
 function replaceSense(senses: WordSense[], index: number, replacement: WordSense): WordSense[] { return senses.map((sense, itemIndex) => (itemIndex === index ? replacement : sense)) }
+function useExitPresence(present: boolean, exitDuration: number): { rendered: boolean; state: MotionState } {
+  const [rendered, setRendered] = useState(present)
+  const [state, setState] = useState<MotionState>('open')
+
+  useEffect(() => {
+    if (present) {
+      setRendered(true)
+      setState('open')
+      return
+    }
+    if (!rendered) return
+
+    setState('closing')
+    const timer = window.setTimeout(() => setRendered(false), exitDuration)
+    return () => window.clearTimeout(timer)
+  }, [exitDuration, present, rendered])
+
+  return { rendered, state }
+}
 function useDebouncedValue<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
