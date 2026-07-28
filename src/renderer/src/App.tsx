@@ -41,7 +41,7 @@ type CollectionView = 'active' | 'trash'
 type Toast = { kind: 'success' | 'error'; message: string } | null
 type ToastKind = 'success' | 'error'
 type MotionState = 'open' | 'closing'
-const CATEGORY_COLORS = ['#ff9f0a', '#30b0c7', '#5e5ce6', '#ff6482', '#ac8e68', '#0a84ff']
+const CATEGORY_COLORS = ['#6e6e6e']
 
 const statusCopy: Record<EnrichmentStatus, string> = {
   pending: '待 AI 处理',
