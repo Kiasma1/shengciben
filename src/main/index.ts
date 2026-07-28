@@ -26,6 +26,16 @@ async function refreshRootMatches(wordId: string): Promise<void> {
   notifyChanged()
 }
 
+async function refreshAllRootMatches(): Promise<void> {
+  const settings = database.getSettings()
+  await rootIndexer.ensure(settings.dictionaryPath)
+  for (const entry of database.listRootRefreshTargets()) {
+    const matches = await rootIndexer.match(entry.word, settings.dictionaryPath)
+    database.setRootMatches(entry.id, matches)
+  }
+  notifyChanged()
+}
+
 function scheduleRootRefresh(wordId: string): void {
   void refreshRootMatches(wordId).catch((error: unknown) => {
     console.error('词根索引刷新失败：', error)
@@ -143,7 +153,10 @@ function setupIpc(): void {
   ipcMain.handle('settings:save', (_event, settings: AppSettings) => {
     const saved = database.saveSettings(settings)
     notifyChanged()
-    void rootIndexer.ensure(saved.dictionaryPath).then(notifyChanged).catch(notifyChanged)
+    void refreshAllRootMatches().catch((error: unknown) => {
+      console.error('全部词根关联刷新失败：', error)
+      notifyChanged()
+    })
     void processor.processNext()
     return saved
   })
@@ -161,7 +174,7 @@ function setupIpc(): void {
   ipcMain.handle('roots:status', () => rootIndexer.currentStatus(database.getSettings().dictionaryPath))
   ipcMain.handle('roots:rebuild', async () => {
     const status = await rootIndexer.rebuild(database.getSettings().dictionaryPath)
-    notifyChanged()
+    await refreshAllRootMatches()
     return status
   })
   ipcMain.handle('roots:choose-file', async () => {
@@ -214,7 +227,7 @@ app.whenReady().then(async () => {
   setupIpc()
   createWindow()
   processor.start()
-  void rootIndexer.ensure(database.getSettings().dictionaryPath).then(notifyChanged).catch((error: unknown) => {
+  void refreshAllRootMatches().catch((error: unknown) => {
     console.error('词根索引初始化失败：', error)
     notifyChanged()
   })

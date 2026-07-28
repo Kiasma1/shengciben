@@ -180,6 +180,10 @@ export class AppDatabase {
     return rows.map((row) => this.hydrateWord(row))
   }
 
+  listRootRefreshTargets(): { id: string; word: string }[] {
+    return this.db.prepare('SELECT id, word FROM words').all() as { id: string; word: string }[]
+  }
+
   getWord(id: string): WordEntry | null {
     const row = this.db
       .prepare(`

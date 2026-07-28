@@ -3,6 +3,15 @@ import path from 'node:path'
 import type { RootIndexStatus, RootMatch } from '../shared/types'
 
 type IndexedRoot = Omit<RootMatch, 'matchedVia'>
+type DictionaryExample = {
+  word: string
+  formationNote: string
+  rootReferences: string[]
+}
+type ParsedRootSection = {
+  markup: string
+  rootMatch: IndexedRoot
+}
 type IndexFile = {
   version: number
   sourcePath: string
@@ -11,7 +20,7 @@ type IndexFile = {
   entries: Record<string, IndexedRoot[]>
 }
 
-const INDEX_VERSION = 2
+const INDEX_VERSION = 3
 const decodeHtml = (value: string): string =>
   value
     .replace(/&nbsp;/g, ' ')
@@ -38,6 +47,16 @@ const rootIdentity = (value: string): string =>
     .replace(/⁸/g, '8')
     .replace(/⁹/g, '9')
     .replace(/[^a-z0-9-]/g, '')
+const rootLookupIdentity = (value: string): string => rootIdentity(value).replace(/^-+|-+$/g, '')
+const rootForms = (value: string): string[] =>
+  value
+    .split(/[,、/]/)
+    .map((form) => form.trim())
+    .filter(Boolean)
+const isRootHeading = (value: string): boolean => {
+  const forms = rootForms(value)
+  return Boolean(forms.length && forms.every((form) => /^-?[a-z][a-z0-9¹²³⁴⁵⁶⁷⁸⁹-]*$/i.test(form)))
+}
 
 export function lemmaCandidates(word: string): string[] {
   const candidates = new Set<string>()
@@ -159,35 +178,72 @@ export class RootIndexer {
   private parseEntries(markup: string): Record<string, IndexedRoot[]> {
     const entries = new Map<string, IndexedRoot[]>()
     const rootMetadata = new Map<string, IndexedRoot>()
+    const parsedSections: ParsedRootSection[] = []
     const sectionPattern = /<h2\b([^>]*)>([\s\S]*?)<\/h2>([\s\S]*?)(?=<h2\b|$)/gi
 
     for (const section of markup.matchAll(sectionPattern)) {
-      if (!/<code\b/i.test(section[2])) continue
       const attributes = section[1]
-      const heading = textContent(section[2]).replace(/（续）|\(续\)/g, '').trim()
-      const root = heading.replace(/^构词成分[：:]?\s*/u, '').trim()
-      if (!root || !/[a-z]/i.test(root) || root.length > 80) continue
+      const rawHeading = textContent(section[2]).replace(/^构词成分[：:]?\s*/u, '').trim()
+      const continuation = /（续）|\(续\)/.test(rawHeading)
+      const bracketMeaning = /\[([^\]]+)]\s*$/.exec(rawHeading)?.[1]?.trim() ?? ''
+      const root = rawHeading
+        .replace(/（续）|\(续\)/g, '')
+        .replace(/\[[^\]]+]\s*$/, '')
+        .trim()
+      if (!root || root.length > 80 || !isRootHeading(root)) continue
 
       const anchor = /\bid=["']([^"']+)["']/i.exec(attributes)?.[1] ?? ''
-      const meaning = this.extractMeaning(section[3])
+      const existingMetadata = continuation
+        ? rootForms(root)
+            .map((form) => rootMetadata.get(rootLookupIdentity(form)))
+            .find((metadata): metadata is IndexedRoot => Boolean(metadata))
+        : undefined
+      const canonicalRoot = existingMetadata?.root ?? root
+      const meaning = existingMetadata?.meaning ?? this.extractMeaning(section[3], bracketMeaning)
       const rootMatch: IndexedRoot = {
-        root,
+        root: canonicalRoot,
         meaning,
         formationNote: '',
         sourceAnchor: anchor,
-        sourceLabel: `词根 ${root}`
+        sourceLabel: `词根 ${canonicalRoot}`
       }
-      for (const form of root.split(',')) {
-        const key = rootIdentity(form)
-        if (key) rootMetadata.set(key, rootMatch)
+      parsedSections.push({ markup: section[3], rootMatch })
+
+      for (const form of rootForms(canonicalRoot)) {
+        const key = rootLookupIdentity(form)
+        if (key && !rootMetadata.has(key)) rootMetadata.set(key, rootMatch)
       }
-      const examples = this.extractWordExamples(section[3])
+    }
+
+    for (const section of parsedSections) {
+      const examples = [
+        ...this.extractWordExamples(section.markup).map((example) => ({ ...example, rootReferences: [] })),
+        ...this.extractEmphasizedExamples(section.markup)
+      ]
       for (const example of examples) {
         const key = normalized(example.word)
         if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(key) || key.length < 2) continue
         const existing = entries.get(key) ?? []
-        const wordMatch = { ...rootMatch, formationNote: example.formationNote }
+        const wordMatch = { ...section.rootMatch, formationNote: example.formationNote }
         if (!existing.some((item) => item.root === wordMatch.root && item.sourceAnchor === wordMatch.sourceAnchor)) existing.push(wordMatch)
+
+        for (const reference of example.rootReferences) {
+          const referenceKey = rootLookupIdentity(reference)
+          const metadata = rootMetadata.get(referenceKey)
+          if (!metadata) continue
+          const displayRoot =
+            rootForms(metadata.root).find((form) => rootLookupIdentity(form) === referenceKey) ??
+            reference
+          const referenceMatch: IndexedRoot = {
+            ...metadata,
+            root: displayRoot,
+            formationNote: example.formationNote,
+            sourceLabel: `词根 ${displayRoot}`
+          }
+          if (!existing.some((item) => item.root === referenceMatch.root && item.sourceAnchor === referenceMatch.sourceAnchor)) {
+            existing.push(referenceMatch)
+          }
+        }
         entries.set(key, existing)
       }
     }
@@ -220,11 +276,46 @@ export class RootIndexer {
     return Object.fromEntries(entries)
   }
 
-  private extractMeaning(section: string): string {
-    const match = /核心词根义<\/(?:strong|b)>[：:]?\s*([\s\S]*?)<\/li>/i.exec(section)
-    if (!match) return '词根义待在原辞典中查看'
-    const value = textContent(match[1]).replace(/^[:：]\s*/, '')
-    return value || '词根义待在原辞典中查看'
+  private extractMeaning(section: string, headingMeaning = ''): string {
+    const match = /核心词根义\s*[：:]?\s*<\/(?:strong|b)>\s*[：:]?\s*([\s\S]*?)<\/li>/i.exec(section)
+    if (match) {
+      const value = textContent(match[1]).replace(/^[:：]\s*/, '')
+      if (value) return value
+    }
+    if (headingMeaning) return headingMeaning
+    const introduction = /^\s*<p\b[^>]*>([\s\S]*?)<\/p>/i.exec(section)?.[1] ?? ''
+    const quotedMeaning = /「([^」]{1,120})」/.exec(textContent(introduction))?.[1]?.trim()
+    return quotedMeaning || '词根义待在原辞典中查看'
+  }
+
+  private extractEmphasizedExamples(section: string): DictionaryExample[] {
+    const examples: DictionaryExample[] = []
+    const listItemPattern = /<li\b[^>]*>([\s\S]*?)<\/li>/gi
+    const exampleLabelPattern = /基础词根|词根词|加前缀词根|加后缀词根|复合词|派生词|例词|examples?/i
+    const emphasizedWordPattern = /<(em|code)\b[^>]*>([\s\S]*?)<\/\1>\s*(?:（[^）]{0,80}）\s*)?「/gi
+
+    for (const item of section.matchAll(listItemPattern)) {
+      const strong = /^\s*<strong\b[^>]*>([\s\S]*?)<\/strong>\s*[：:]?/i.exec(item[1])
+      if (!strong || !exampleLabelPattern.test(textContent(strong[1]))) continue
+      const body = item[1].slice(strong[0].length)
+      for (const clause of body.split(/[；;]/)) {
+        const referenceMarker = /(?:其中|源自|来自|由)\s*/.exec(clause)
+        const exampleMarkup = referenceMarker ? clause.slice(0, referenceMarker.index) : clause
+        const referenceMarkup = referenceMarker ? clause.slice(referenceMarker.index + referenceMarker[0].length) : ''
+        const rootReferences = [...referenceMarkup.matchAll(emphasizedWordPattern)]
+          .map((match) => textContent(match[2]))
+          .filter((word) => /^[a-z][a-z0-9¹²³⁴⁵⁶⁷⁸⁹-]*$/i.test(word))
+        const formationNote = textContent(clause)
+        const clippedNote = formationNote.length > 360 ? `${formationNote.slice(0, 360).trim()}…` : formationNote
+
+        for (const candidate of exampleMarkup.matchAll(emphasizedWordPattern)) {
+          const word = textContent(candidate[2])
+          if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(word)) continue
+          examples.push({ word, formationNote: clippedNote, rootReferences })
+        }
+      }
+    }
+    return examples
   }
 
   private extractWordExamples(section: string): { word: string; formationNote: string }[] {
