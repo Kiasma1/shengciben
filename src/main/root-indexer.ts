@@ -12,6 +12,19 @@ type ParsedRootSection = {
   markup: string
   rootMatch: IndexedRoot
 }
+type InlineRootSection = {
+  root: string
+  continuation: boolean
+  headingMeaning: string
+  markup: string
+  sourceAnchor: string
+  offset: number
+  declarationEnd: number
+}
+type ListItemNode = {
+  markup: string
+  children: ListItemNode[]
+}
 type IndexFile = {
   version: number
   sourcePath: string
@@ -20,7 +33,7 @@ type IndexFile = {
   entries: Record<string, IndexedRoot[]>
 }
 
-const INDEX_VERSION = 3
+const INDEX_VERSION = 9
 const decodeHtml = (value: string): string =>
   value
     .replace(/&nbsp;/g, ' ')
@@ -56,6 +69,97 @@ const rootForms = (value: string): string[] =>
 const isRootHeading = (value: string): boolean => {
   const forms = rootForms(value)
   return Boolean(forms.length && forms.every((form) => /^-?[a-z][a-z0-9¹²³⁴⁵⁶⁷⁸⁹-]*$/i.test(form)))
+}
+const isLetterChapterHeading = (value: string): boolean => {
+  const forms = rootForms(value)
+  return Boolean(forms.length && forms.every((form) => /^[A-Z]$/.test(form)))
+}
+const cleanRootHeading = (value: string): string =>
+  value
+    .replace(/^构词成分[：:]?\s*/u, '')
+    .replace(/([a-z][a-z0-9¹²³⁴⁵⁶⁷⁸⁹-]*)\s*（亦拼作\s+([a-z][a-z0-9¹²³⁴⁵⁶⁷⁸⁹-]*)）/gi, '$1 / $2')
+    .replace(/\b([a-z][a-z0-9¹²³⁴⁵⁶⁷⁸⁹-]*)\(([a-z])\)/gi, '$1$2 / $1')
+    .replace(/（续）|\(续\)/g, '')
+    .replace(/\s*(?:—{2,}|–{2,}|-{2,})[\s\S]*$/, '')
+    .replace(/\s*[—–]\s+[\s\S]*$/, '')
+    .replace(/\s+-\s+[\s\S]*$/, '')
+    .replace(/\[[^\]]+]\s*$/, '')
+    .replace(/\s*[：:][\s\S]*$/, '')
+    .replace(/\s*[〔（(][\s\S]*$/, '')
+    .trim()
+const rootHeadingFromMarkup = (markup: string): string => {
+  const rawHeading = textContent(markup).replace(/^构词成分[：:]?\s*/u, '').trim()
+  const leadingMarkup = markup.split(/[（(〔]/, 1)[0]
+  if (/^\s*<code\b/i.test(leadingMarkup)) {
+    const codeForms = [...leadingMarkup.matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/gi)]
+      .map((match) => textContent(match[1]))
+      .filter((form) => isRootHeading(form))
+    if (codeForms.length) return codeForms.join('、')
+  }
+  return cleanRootHeading(rawHeading)
+}
+const splitDictionaryClauses = (value: string): string[] => {
+  const clauses: string[] = []
+  let start = 0
+  let parenthesisDepth = 0
+  let quoteDepth = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (character === '（' || character === '(' || character === '〔' || character === '[') parenthesisDepth += 1
+    else if (character === '）' || character === ')' || character === '〕' || character === ']') {
+      parenthesisDepth = Math.max(0, parenthesisDepth - 1)
+    }
+    else if (character === '「') quoteDepth += 1
+    else if (character === '」') quoteDepth = Math.max(0, quoteDepth - 1)
+    else if ((character === '；' || character === ';' || character === '。') && parenthesisDepth === 0 && quoteDepth === 0) {
+      clauses.push(value.slice(start, index))
+      start = index + 1
+    }
+  }
+  clauses.push(value.slice(start))
+  return clauses
+}
+const isInsideParentheses = (value: string, offset: number): boolean => {
+  let depth = 0
+  for (let index = 0; index < offset; index += 1) {
+    if (value[index] === '（' || value[index] === '(' || value[index] === '〔' || value[index] === '[') depth += 1
+    else if (value[index] === '）' || value[index] === ')' || value[index] === '〕' || value[index] === ']') {
+      depth = Math.max(0, depth - 1)
+    }
+  }
+  return depth > 0
+}
+const firstTopLevelOffset = (value: string, characters: ReadonlySet<string>): number => {
+  let depth = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (character === '（' || character === '(' || character === '〔' || character === '[') depth += 1
+    else if (character === '）' || character === ')' || character === '〕' || character === ']') {
+      depth = Math.max(0, depth - 1)
+    }
+    else if (depth === 0 && characters.has(character)) return index
+  }
+  return value.length
+}
+const listItemForest = (section: string): ListItemNode[] => {
+  const roots: ListItemNode[] = []
+  const stack: ListItemNode[] = []
+  const tokenPattern = /<li\b[^>]*>|<\/li>|<[^>]*>|[^<]+/gi
+  for (const token of section.matchAll(tokenPattern)) {
+    const value = token[0]
+    if (/^<li\b/i.test(value)) {
+      const node: ListItemNode = { markup: '', children: [] }
+      const parent = stack.at(-1)
+      if (parent) parent.children.push(node)
+      else roots.push(node)
+      stack.push(node)
+    } else if (/^<\/li/i.test(value)) {
+      stack.pop()
+    } else if (stack.length) {
+      stack[stack.length - 1].markup += value
+    }
+  }
+  return roots
 }
 
 export function lemmaCandidates(word: string): string[] {
@@ -122,11 +226,11 @@ export class RootIndexer {
 
     const exactKey = normalized(word)
     const exact = this.index.entries[exactKey]
-    if (exact?.length) return exact.map((match) => ({ ...match, matchedVia: 'exact' }))
+    if (exact?.length) return this.withMatchMode(exact, 'exact')
 
     for (const lemma of lemmaCandidates(exactKey)) {
       const matches = this.index.entries[lemma]
-      if (matches?.length) return matches.map((match) => ({ ...match, matchedVia: 'lemma' }))
+      if (matches?.length) return this.withMatchMode(matches, 'lemma')
     }
     return []
   }
@@ -179,19 +283,34 @@ export class RootIndexer {
     const entries = new Map<string, IndexedRoot[]>()
     const rootMetadata = new Map<string, IndexedRoot>()
     const parsedSections: ParsedRootSection[] = []
-    const sectionPattern = /<h2\b([^>]*)>([\s\S]*?)<\/h2>([\s\S]*?)(?=<h2\b|$)/gi
+    const englishIndexPattern =
+      /<article\b[^>]*id=["']letter-english-root-index["'][^>]*>([\s\S]*?)<\/article>/i
+    const englishIndexMatch = englishIndexPattern.exec(markup)
+    const englishIndex = englishIndexMatch?.[1] ?? ''
+    const dictionaryMarkup = markup.replace(englishIndexPattern, '')
+    const headingPattern = /<h([23])\b([^>]*)>([\s\S]*?)<\/h\1>/gi
+    const headings = [...dictionaryMarkup.matchAll(headingPattern)]
 
-    for (const section of markup.matchAll(sectionPattern)) {
-      const attributes = section[1]
-      const rawHeading = textContent(section[2]).replace(/^构词成分[：:]?\s*/u, '').trim()
+    for (let headingIndex = 0; headingIndex < headings.length; headingIndex += 1) {
+      const heading = headings[headingIndex]
+      const attributes = heading[2]
+      const rawHeading = textContent(heading[3]).replace(/^构词成分[：:]?\s*/u, '').trim()
+      if (isLetterChapterHeading(rawHeading)) continue
       const continuation = /（续）|\(续\)/.test(rawHeading)
       const bracketMeaning = /\[([^\]]+)]\s*$/.exec(rawHeading)?.[1]?.trim() ?? ''
-      const root = rawHeading
-        .replace(/（续）|\(续\)/g, '')
-        .replace(/\[[^\]]+]\s*$/, '')
-        .trim()
-      if (!root || root.length > 80 || !isRootHeading(root)) continue
+      const root = rootHeadingFromMarkup(heading[3])
+      if (!root || isLetterChapterHeading(root) || root.length > 80 || !isRootHeading(root)) continue
 
+      const bodyStart = (heading.index ?? 0) + heading[0].length
+      const nextHeading = headings
+        .slice(headingIndex + 1)
+        .find((candidate) => {
+          if (Number(candidate[1]) === 2) return true
+          const candidateRoot = rootHeadingFromMarkup(candidate[3])
+          return Boolean(candidateRoot && !isLetterChapterHeading(candidateRoot) && isRootHeading(candidateRoot))
+        })
+      const bodyEnd = nextHeading?.index ?? dictionaryMarkup.length
+      const fullSectionMarkup = dictionaryMarkup.slice(bodyStart, bodyEnd)
       const anchor = /\bid=["']([^"']+)["']/i.exec(attributes)?.[1] ?? ''
       const existingMetadata = continuation
         ? rootForms(root)
@@ -199,7 +318,9 @@ export class RootIndexer {
             .find((metadata): metadata is IndexedRoot => Boolean(metadata))
         : undefined
       const canonicalRoot = existingMetadata?.root ?? root
-      const meaning = existingMetadata?.meaning ?? this.extractMeaning(section[3], bracketMeaning)
+      const inlineSections = this.extractInlineRootSections(fullSectionMarkup, canonicalRoot, anchor)
+      const sectionMarkup = inlineSections.length ? fullSectionMarkup.slice(0, inlineSections[0].offset) : fullSectionMarkup
+      const meaning = existingMetadata?.meaning ?? this.extractMeaning(sectionMarkup, bracketMeaning)
       const rootMatch: IndexedRoot = {
         root: canonicalRoot,
         meaning,
@@ -207,18 +328,43 @@ export class RootIndexer {
         sourceAnchor: anchor,
         sourceLabel: `词根 ${canonicalRoot}`
       }
-      parsedSections.push({ markup: section[3], rootMatch })
+      parsedSections.push({ markup: sectionMarkup, rootMatch })
 
       for (const form of rootForms(canonicalRoot)) {
         const key = rootLookupIdentity(form)
         if (key && !rootMetadata.has(key)) rootMetadata.set(key, rootMatch)
       }
+
+      for (const inlineSection of inlineSections) {
+        const inlineMetadata = inlineSection.continuation
+          ? rootForms(inlineSection.root)
+              .map((form) => rootMetadata.get(rootLookupIdentity(form)))
+              .find((metadata): metadata is IndexedRoot => Boolean(metadata))
+          : undefined
+        const inlineCanonicalRoot = inlineMetadata?.root ?? inlineSection.root
+        const inlineRootMatch: IndexedRoot = {
+          root: inlineCanonicalRoot,
+          meaning: inlineMetadata?.meaning ?? this.extractMeaning(inlineSection.markup, inlineSection.headingMeaning),
+          formationNote: '',
+          sourceAnchor: inlineSection.sourceAnchor,
+          sourceLabel: `词根 ${inlineCanonicalRoot}`
+        }
+        parsedSections.push({ markup: inlineSection.markup, rootMatch: inlineRootMatch })
+        for (const form of rootForms(inlineCanonicalRoot)) {
+          const key = rootLookupIdentity(form)
+          if (key && !rootMetadata.has(key)) rootMetadata.set(key, inlineRootMatch)
+        }
+      }
     }
 
     for (const section of parsedSections) {
+      const exampleMarkup = this.withoutIgnoredSubsections(section.markup)
       const examples = [
-        ...this.extractWordExamples(section.markup).map((example) => ({ ...example, rootReferences: [] })),
-        ...this.extractEmphasizedExamples(section.markup)
+        ...this.extractTaggedExamples(exampleMarkup, section.rootMatch.root).map((example) => ({
+          ...example,
+          rootReferences: []
+        })),
+        ...this.extractEmphasizedExamples(exampleMarkup)
       ]
       for (const example of examples) {
         const key = normalized(example.word)
@@ -248,15 +394,16 @@ export class RootIndexer {
       }
     }
 
-    const englishIndex = /<article\b[^>]*id=["']letter-english-root-index["'][^>]*>([\s\S]*?)<\/article>/i.exec(markup)?.[1] ?? ''
     const indexItemPattern = /<li>\s*<strong>([\s\S]*?)<\/strong>\s*(?:（[^）]*）)?\s*[:：]\s*<code>([\s\S]*?)<\/code>\s*<\/li>/gi
     for (const item of englishIndex.matchAll(indexItemPattern)) {
       const word = textContent(item[1])
       const key = normalized(word)
       if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(key)) continue
-      const rootForms = textContent(item[2]).split(/[,、]/).map((form) => form.trim()).filter(Boolean)
-      const resolved = rootForms.map((form) => {
-        const metadata = rootMetadata.get(rootIdentity(form))
+      const indexedRootForms = rootForms(textContent(item[2]))
+        .map((form) => form.trim())
+        .filter((form) => Boolean(form) && !/^[A-Z]$/.test(form))
+      const resolved = indexedRootForms.map((form) => {
+        const metadata = rootMetadata.get(rootLookupIdentity(form))
         return metadata
           ? { ...metadata, formationNote: '由原辞典“英→根索引”关联。' }
           : {
@@ -276,29 +423,91 @@ export class RootIndexer {
     return Object.fromEntries(entries)
   }
 
+  private extractInlineRootSections(section: string, currentRoot: string, parentAnchor: string): InlineRootSection[] {
+    const currentForms = new Set(rootForms(currentRoot).map((form) => rootLookupIdentity(form)))
+    const declarationPattern = /<p\b[^>]*>\s*<strong\b[^>]*>([^<]{1,80})<\/strong>\s*　+/gi
+    const rawDeclarations = [...section.matchAll(declarationPattern)].flatMap((declaration) => {
+      const rawHeading = textContent(declaration[1]).trim()
+      const continuation = /（续）|\(续\)/.test(rawHeading)
+      const headingMeaning = /\[([^\]]+)]\s*$/.exec(rawHeading)?.[1]?.trim() ?? ''
+      const root = cleanRootHeading(rawHeading)
+      if (!root || !isRootHeading(root)) return []
+      const candidateForms = rootForms(root).map((form) => rootLookupIdentity(form))
+      if (candidateForms.some((form) => currentForms.has(form))) return []
+      const offset = declaration.index ?? 0
+      return [{ root, continuation, headingMeaning, offset, declarationEnd: offset + declaration[0].length }]
+    })
+    const declarations: typeof rawDeclarations = []
+    for (const declaration of rawDeclarations) {
+      const previous = declarations.at(-1)
+      if (previous) {
+        const betweenDeclarations = section.slice(previous.declarationEnd, declaration.offset)
+        const previousForms = rootForms(previous.root).map((form) => rootLookupIdentity(form))
+        const candidateForms = rootForms(declaration.root).map((form) => rootLookupIdentity(form))
+        const relatedForms = previousForms.some((previousForm) =>
+          candidateForms.some((candidateForm) =>
+            Math.min(previousForm.length, candidateForm.length) >= 3 &&
+            (candidateForm.startsWith(previousForm) || previousForm.startsWith(candidateForm))
+          )
+        )
+        if (relatedForms && !/<(?:ul|li|strong)\b/i.test(betweenDeclarations)) continue
+      }
+      declarations.push(declaration)
+    }
+
+    return declarations.map((declaration, index) => {
+      const end = declarations[index + 1]?.offset ?? section.length
+      const precedingMarkup = section.slice(0, declaration.offset)
+      const pageAnchors = [...precedingMarkup.matchAll(/\bid=["'](pdf-page-\d+)["']/gi)]
+      return {
+        ...declaration,
+        markup: section.slice(declaration.offset, end),
+        sourceAnchor: pageAnchors.at(-1)?.[1] ?? parentAnchor
+      }
+    })
+  }
+
+  private withoutIgnoredSubsections(section: string): string {
+    const headings = [...section.matchAll(/<h([3-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)]
+    let cursor = 0
+    let result = ''
+    for (let index = 0; index < headings.length; index += 1) {
+      const heading = headings[index]
+      const label = textContent(heading[2])
+      if (!/^(?:(?:交叉参见|参见)(?:（[^）]*）)?|cross\s*reference\b)/i.test(label)) continue
+      const start = heading.index ?? 0
+      if (start < cursor) continue
+      result += section.slice(cursor, start)
+      cursor = headings[index + 1]?.index ?? section.length
+    }
+    return `${result}${section.slice(cursor)}`
+  }
+
   private extractMeaning(section: string, headingMeaning = ''): string {
-    const match = /核心词根义\s*[：:]?\s*<\/(?:strong|b)>\s*[：:]?\s*([\s\S]*?)<\/li>/i.exec(section)
+    const match =
+      /(?:核心词根义|词义)\s*(?:（[^）]*）|\([^)]*\))?\s*[：:]?\s*<\/(?:strong|b)>\s*[：:]?\s*([\s\S]*?)<\/li>/i.exec(
+        section
+      )
     if (match) {
       const value = textContent(match[1]).replace(/^[:：]\s*/, '')
       if (value) return value
     }
     if (headingMeaning) return headingMeaning
     const introduction = /^\s*<p\b[^>]*>([\s\S]*?)<\/p>/i.exec(section)?.[1] ?? ''
-    const quotedMeaning = /「([^」]{1,120})」/.exec(textContent(introduction))?.[1]?.trim()
-    return quotedMeaning || '词根义待在原辞典中查看'
+    const quotedMeaning = /(?:「([^」]{1,120})」|“([^”]{1,120})”)/.exec(textContent(introduction))
+    const quotedValue = quotedMeaning?.[1]?.trim() ?? quotedMeaning?.[2]?.trim()
+    return quotedValue || '词根义待在原辞典中查看'
   }
 
   private extractEmphasizedExamples(section: string): DictionaryExample[] {
     const examples: DictionaryExample[] = []
     const listItemPattern = /<li\b[^>]*>([\s\S]*?)<\/li>/gi
-    const exampleLabelPattern = /基础词根|词根词|加前缀词根|加后缀词根|复合词|派生词|例词|examples?/i
     const emphasizedWordPattern = /<(em|code)\b[^>]*>([\s\S]*?)<\/\1>\s*(?:（[^）]{0,80}）\s*)?「/gi
 
     for (const item of section.matchAll(listItemPattern)) {
       const strong = /^\s*<strong\b[^>]*>([\s\S]*?)<\/strong>\s*[：:]?/i.exec(item[1])
-      if (!strong || !exampleLabelPattern.test(textContent(strong[1]))) continue
-      const body = item[1].slice(strong[0].length)
-      for (const clause of body.split(/[；;]/)) {
+      const body = strong ? item[1].slice(strong[0].length) : item[1]
+      for (const clause of splitDictionaryClauses(body)) {
         const referenceMarker = /(?:其中|源自|来自|由)\s*/.exec(clause)
         const exampleMarkup = referenceMarker ? clause.slice(0, referenceMarker.index) : clause
         const referenceMarkup = referenceMarker ? clause.slice(referenceMarker.index + referenceMarker[0].length) : ''
@@ -311,6 +520,10 @@ export class RootIndexer {
         for (const candidate of exampleMarkup.matchAll(emphasizedWordPattern)) {
           const word = textContent(candidate[2])
           if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(word)) continue
+          const candidateIndex = candidate.index ?? 0
+          if (isInsideParentheses(exampleMarkup, candidateIndex)) continue
+          const precedingText = textContent(exampleMarkup.slice(0, candidateIndex))
+          if (/(?:同义词|参见|复数|例如|如|与|同|见|比较|对照)[：:]?\s*$/i.test(precedingText)) continue
           examples.push({ word, formationNote: clippedNote, rootReferences })
         }
       }
@@ -318,35 +531,159 @@ export class RootIndexer {
     return examples
   }
 
-  private extractWordExamples(section: string): { word: string; formationNote: string }[] {
+  private extractTaggedExamples(section: string, currentRoot: string): { word: string; formationNote: string }[] {
     const examples: { word: string; formationNote: string }[] = []
-    const listStack: { firstCode: string | null; markup: string }[] = []
-    const tokenPattern = /<li\b[^>]*>|<\/li>|<code\b[^>]*>([\s\S]*?)<\/code>|<[^>]*>|[^<]+/gi
-    for (const token of section.matchAll(tokenPattern)) {
-      const value = token[0]
-      if (/^<li\b/i.test(value)) {
-        listStack.push({ firstCode: null, markup: '' })
-      } else if (/^<\/li/i.test(value)) {
-        const item = listStack.pop()
-        if (item?.firstCode) {
-          const fullText = textContent(item.markup)
-          const formationNote = fullText.toLocaleLowerCase('en-US').startsWith(item.firstCode.toLocaleLowerCase('en-US'))
-            ? fullText.slice(item.firstCode.length).replace(/^[:：\s]+/, '').trim()
-            : fullText
-          examples.push({
-            word: item.firstCode,
-            formationNote: formationNote.length > 360 ? `${formationNote.slice(0, 360).trim()}…` : formationNote
-          })
-        }
-      } else if (listStack.length) {
-        for (const item of listStack) item.markup += value
-        if (token[1]) {
-          const item = listStack[listStack.length - 1]
-          if (!item.firstCode) item.firstCode = textContent(token[1])
+    const nonHeadwordLabels = new Set([
+      'antonyms',
+      'english',
+      'examples',
+      'french',
+      'from',
+      'german',
+      'ie',
+      'italian',
+      'latin',
+      'meaning',
+      'none',
+      'russian',
+      'spanish',
+      'synonyms'
+    ])
+    const ignoredLabel =
+      /^(?:(?:交叉参见|参见|同义词|近义词)(?:（[^）]*）)?|(?:cross\s*reference|synonyms?|antonyms?)\b)/i
+    const validWord = /^[a-z]+(?:[-'][a-z]+)*$/i
+    const currentRootKeys = rootForms(currentRoot).map((form) => rootLookupIdentity(form))
+
+    const visit = (node: ListItemNode): void => {
+      const formationNote = textContent(node.markup).replace(/^[:：\s]+/, '').trim()
+      const clippedNote = formationNote.length > 360 ? `${formationNote.slice(0, 360).trim()}…` : formationNote
+      const nodeExamples: { word: string; formationNote: string }[] = []
+      let ignored = false
+      let familyHeadwordKey = ''
+
+      const collectCandidates = (candidateMarkup: string, requiredFamily = ''): void => {
+        const leadingTag = /^\s*<(code|strong)\b/i.exec(candidateMarkup)?.[1]?.toLocaleLowerCase('en-US')
+        if (!leadingTag) return
+        const candidatePattern = new RegExp(`<${leadingTag}\\b[^>]*>([\\s\\S]*?)<\\/${leadingTag}>`, 'gi')
+        let previousCandidateEnd = -1
+        for (const candidate of candidateMarkup.matchAll(candidatePattern)) {
+          if (isInsideParentheses(candidateMarkup, candidate.index ?? 0)) continue
+          if (previousCandidateEnd >= 0) {
+            const separator = textContent(candidateMarkup.slice(previousCandidateEnd, candidate.index ?? 0))
+            if (!/[、,，/]\s*$/.test(separator)) continue
+          }
+          let acceptedCandidate = false
+          for (const word of textContent(candidate[1]).split(/[,、]/).map((value) => value.trim())) {
+            if (!validWord.test(word) || nonHeadwordLabels.has(normalized(word))) continue
+            const wordKey = normalized(word)
+            if (requiredFamily && !wordKey.includes(requiredFamily)) continue
+            if (
+              nodeExamples.some((example) => {
+                const earlierKey = normalized(example.word)
+                return earlierKey.length > wordKey.length && earlierKey.includes(wordKey)
+              })
+            ) {
+              continue
+            }
+            nodeExamples.push({ word, formationNote: clippedNote })
+            acceptedCandidate = true
+          }
+          if (acceptedCandidate) previousCandidateEnd = (candidate.index ?? 0) + candidate[0].length
         }
       }
+
+      for (const rawClause of splitDictionaryClauses(node.markup)) {
+        if (nodeExamples.length && !familyHeadwordKey) break
+        let clause = rawClause
+          .replace(/^\s*<(?:p|div)\b[^>]*>\s*/i, '')
+          .replace(/\s*<\/(?:p|div)>\s*$/i, '')
+        const leadingStrong = /^\s*<strong\b[^>]*>([\s\S]*?)<\/strong>\s*[：:]?/i.exec(clause)
+        if (leadingStrong) {
+          const label = textContent(leadingStrong[1])
+          if (ignoredLabel.test(label)) {
+            ignored = true
+            break
+          }
+          if (!validWord.test(label) || nonHeadwordLabels.has(normalized(label))) {
+            clause = clause.slice(leadingStrong[0].length)
+          }
+        }
+
+        const definitionOffset = firstTopLevelOffset(clause, new Set(['：', ':']))
+        const headwordMarkup = clause.slice(0, definitionOffset)
+        const examplesBeforeClause = nodeExamples.length
+        collectCandidates(headwordMarkup, familyHeadwordKey)
+        if (
+          !familyHeadwordKey &&
+          examplesBeforeClause === 0 &&
+          nodeExamples.length === 1 &&
+          definitionOffset < clause.length
+        ) {
+          familyHeadwordKey = normalized(nodeExamples[0].word)
+          collectCandidates(clause.slice(definitionOffset + 1), familyHeadwordKey)
+        }
+      }
+
+      if (ignored) return
+      const uniqueNodeExamples = [...new Map(nodeExamples.map((example) => [normalized(example.word), example])).values()]
+      const visibleRemainder = textContent(node.markup)
+        .replace(/[a-z]+(?:[-'][a-z]+)*/gi, '')
+        .replace(/[,、/：:\s-]/g, '')
+      const candidateKey = uniqueNodeExamples.length === 1 ? rootLookupIdentity(uniqueNodeExamples[0].word) : ''
+      const isRootVariantLabel =
+        candidateKey.length > 0 &&
+        currentRootKeys.some(
+          (rootKey) =>
+            Math.abs(rootKey.length - candidateKey.length) <= 1 &&
+            (rootKey.startsWith(candidateKey) || candidateKey.startsWith(rootKey))
+        )
+      const isGroupLabel =
+        node.children.length > 0 && uniqueNodeExamples.length === 1 && !visibleRemainder && isRootVariantLabel
+      if (!isGroupLabel && uniqueNodeExamples.length) {
+        examples.push(...uniqueNodeExamples)
+        return
+      }
+      for (const child of node.children) visit(child)
     }
+
+    for (const node of listItemForest(section)) visit(node)
     return examples
+  }
+
+  private withMatchMode(matches: IndexedRoot[], matchedVia: RootMatch['matchedVia']): RootMatch[] {
+    const uniqueMatches: IndexedRoot[] = []
+    for (const match of matches) {
+      const identity = rootIdentity(match.root)
+      const forms = new Set(rootForms(match.root).map((form) => rootLookupIdentity(form)))
+      const duplicateIndex = uniqueMatches.findIndex((existing) => {
+        if (rootIdentity(existing.root) === identity) return true
+        const hasEnglishIndexFallback =
+          existing.sourceAnchor === 'letter-english-root-index' || match.sourceAnchor === 'letter-english-root-index'
+        if (
+          hasEnglishIndexFallback &&
+          rootLookupIdentity(existing.root).replace(/-/g, '') === rootLookupIdentity(match.root).replace(/-/g, '')
+        ) {
+          return true
+        }
+        if (existing.sourceAnchor !== match.sourceAnchor) return false
+        return rootForms(existing.root).some((form) => forms.has(rootLookupIdentity(form)))
+      })
+      if (duplicateIndex < 0) {
+        uniqueMatches.push(match)
+        continue
+      }
+      const existing = uniqueMatches[duplicateIndex]
+      const existingIsFallback = existing.sourceAnchor === 'letter-english-root-index'
+      const matchIsFallback = match.sourceAnchor === 'letter-english-root-index'
+      if (
+        (existingIsFallback && !matchIsFallback) ||
+        (existingIsFallback === matchIsFallback &&
+          rootForms(match.root).length > rootForms(existing.root).length)
+      ) {
+        uniqueMatches[duplicateIndex] = match
+      }
+    }
+    return uniqueMatches.map((match) => ({ ...match, matchedVia }))
   }
 
   private status(sourcePath: string, message: string): RootIndexStatus {

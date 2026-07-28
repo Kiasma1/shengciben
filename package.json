@@ -9,6 +9,7 @@
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
     "test": "node --no-warnings --experimental-strip-types --test tests/*.test.mts",
+    "test:roots:random": "node --no-warnings --experimental-strip-types tests/root-indexer-random-audit.mts",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && electron-vite build",
     "build:win": "npm run build && electron-builder --win nsis",
