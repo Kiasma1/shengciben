@@ -40,8 +40,7 @@ test('an in-flight AI response cannot overwrite a manual save', async (context) 
     ipaUk: 'manual-ipa',
     senses: [{ partOfSpeech: 'noun', definitionZh: '人工释义' }],
     categoryId: created.entry.categoryId,
-    tagNames: ['人工'],
-    aiReviewed: true
+    tagNames: ['人工']
   })
   response.resolve({
     ipaUk: 'ai-ipa',
@@ -90,8 +89,7 @@ test('a manual save during provider detection prevents AI from starting', async 
     ipaUk: 'saved',
     senses: [{ partOfSpeech: 'noun', definitionZh: '人工保存' }],
     categoryId: created.entry.categoryId,
-    tagNames: [],
-    aiReviewed: true
+    tagNames: []
   })
   connection.resolve({ available: true, models: ['test'], message: 'ok' })
   await processing

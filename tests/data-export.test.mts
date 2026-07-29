@@ -24,8 +24,6 @@ test('CSV export preserves Chinese text and escapes quotes', () => {
       }],
       status: 'ready',
       aiError: null,
-      aiReviewed: true,
-      suggestedCategory: null,
       isDeleted: false,
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z'
@@ -35,4 +33,5 @@ test('CSV export preserves Chinese text and escapes quotes', () => {
   assert.ok(csv.startsWith('\uFEFF'))
   assert.ok(csv.includes('"verb: ""引用"", 引述"'))
   assert.match(csv, /"来自拉丁语"/)
+  assert.doesNotMatch(csv, /已核对/)
 })

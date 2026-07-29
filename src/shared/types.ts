@@ -1,4 +1,4 @@
-export type EnrichmentStatus = 'pending' | 'processing' | 'needs_review' | 'ready' | 'failed'
+export type EnrichmentStatus = 'pending' | 'processing' | 'ready' | 'failed'
 export type RootMatchMode = 'exact' | 'lemma'
 
 export interface Category {
@@ -42,8 +42,6 @@ export interface WordEntry {
   rootMatches: RootMatch[]
   status: EnrichmentStatus
   aiError: string | null
-  aiReviewed: boolean
-  suggestedCategory: string | null
   isDeleted: boolean
   createdAt: string
   updatedAt: string
@@ -64,7 +62,6 @@ export interface WordDraft {
   senses: WordSense[]
   categoryId: string
   tagNames: string[]
-  aiReviewed: boolean
 }
 
 export interface AppSettings {

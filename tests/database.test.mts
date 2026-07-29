@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import Database from 'better-sqlite3'
 import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -18,7 +19,7 @@ const createDatabase = () => {
   }
 }
 
-test('manual save completes the AI task and keeps review state consistent', (context) => {
+test('manual save completes the AI task and marks the word ready', (context) => {
   const fixture = createDatabase()
   context.after(fixture.cleanup)
   const created = fixture.database.createWord('Vocabulary')
@@ -33,15 +34,55 @@ test('manual save completes the AI task and keeps review state consistent', (con
     ipaUk: 'vəˈkæbjələri',
     senses: [{ partOfSpeech: 'noun', definitionZh: '词汇' }],
     categoryId: created.entry.categoryId,
-    tagNames: ['考试'],
-    aiReviewed: true
+    tagNames: ['考试']
   })
 
   assert.equal(saved.status, 'ready')
-  assert.equal(saved.aiReviewed, true)
   assert.equal(fixture.database.isTaskProcessing(task.taskId), false)
   assert.equal(fixture.database.nextPendingTask(), null)
   assert.deepEqual(saved.senses.map((sense) => sense.definitionZh), ['词汇'])
+})
+
+test('AI enrichment is trusted immediately and creates its suggested category', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const created = fixture.database.createWord('Vocabulary')
+
+  fixture.database.applyEnrichment(created.entry.id, {
+    ipaUk: 'vəˈkæbjələri',
+    senses: [{ partOfSpeech: 'noun', definitionZh: '词汇' }],
+    suggestedCategory: '学术写作',
+    tagNames: ['考试']
+  })
+
+  const enriched = fixture.database.getWord(created.entry.id)
+  assert.equal(enriched?.status, 'ready')
+  assert.equal(enriched?.categoryName, '学术写作')
+  assert.deepEqual(enriched?.senses.map((sense) => sense.definitionZh), ['词汇'])
+  assert.deepEqual(enriched?.tags.map((tag) => tag.name), ['考试'])
+})
+
+test('legacy review records become ready when the database reopens', (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-review-migration-'))
+  const first = new AppDatabase(directory)
+  const created = first.createWord('Trusted')
+  first.close()
+
+  const raw = new Database(path.join(directory, 'shengciben.sqlite'))
+  raw
+    .prepare(`UPDATE words SET enrichment_status = 'needs_review', ai_reviewed = 0, suggested_category = 'AI 分类' WHERE id = ?`)
+    .run(created.entry.id)
+  raw.close()
+
+  const reopened = new AppDatabase(directory)
+  context.after(() => {
+    reopened.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  const migrated = reopened.getWord(created.entry.id)
+  assert.equal(migrated?.status, 'ready')
+  assert.equal(migrated?.categoryName, 'AI 分类')
 })
 
 test('interrupted processing tasks return to pending when the database reopens', (context) => {

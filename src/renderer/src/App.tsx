@@ -46,15 +46,13 @@ const CATEGORY_COLORS = ['#6e6e6e']
 const statusCopy: Record<EnrichmentStatus, string> = {
   pending: '待 AI 处理',
   processing: 'AI 处理中',
-  needs_review: '待核对',
-  ready: '已核对',
+  ready: '已完成',
   failed: '处理失败'
 }
 
 const statusTone: Record<EnrichmentStatus, string> = {
   pending: 'muted',
   processing: 'processing',
-  needs_review: 'review',
   ready: 'ready',
   failed: 'failed'
 }
@@ -294,8 +292,7 @@ export default function App(): ReactElement {
               <option value="all">全部状态</option>
               <option value="pending">待 AI 处理</option>
               <option value="processing">AI 处理中</option>
-              <option value="needs_review">待核对</option>
-              <option value="ready">已核对</option>
+              <option value="ready">已完成</option>
               <option value="failed">处理失败</option>
             </select>
             <button className="text-button" onClick={() => setSort((value) => (value === 'recent' ? 'alphabetical' : 'recent'))} aria-label={`当前按${sort === 'recent' ? '最近更新' : '字母顺序'}排列，点击切换`}>
@@ -537,20 +534,6 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
     onChanged()
   }
 
-  const acceptSuggestedCategory = async (): Promise<void> => {
-    if (!entry.suggestedCategory) return
-    try {
-      const category = await window.api.categories.create(entry.suggestedCategory, CATEGORY_COLORS[categories.length % CATEGORY_COLORS.length])
-      const saved = await window.api.words.save({ ...draft, categoryId: category.id })
-      setDraft(asDraft(saved))
-      setDirty(false)
-      onToast('success', `已创建并应用分类「${category.name}」。`)
-      onChanged()
-    } catch (error) {
-      onToast('error', messageOf(error))
-    }
-  }
-
   if (isTrash) {
     return (
       <div className="empty-detail trashed-detail">
@@ -564,7 +547,7 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
 
   return (
     <article className="detail-card">
-      <div className="detail-status-line"><StatusBadge status={entry.status} />{entry.aiReviewed && <span className="verified-note"><Check size={14} /> 已人工核对</span>}</div>
+      <div className="detail-status-line"><StatusBadge status={entry.status} /></div>
       {entry.aiError && <div className="inline-alert"><CircleAlert size={17} /><span>{entry.aiError}</span><button onClick={() => void retry()}><RefreshCw size={14} />重试</button></div>}
 
       <section className="form-section word-heading-section">
@@ -591,7 +574,6 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
           <label>主分类<select value={draft.categoryId} onChange={(event) => editDraft({ ...draft, categoryId: event.target.value })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
           <label>标签<input value={draft.tagNames.join('，')} onChange={(event) => editDraft({ ...draft, tagNames: event.target.value.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean) })} placeholder="用逗号分隔" /></label>
         </div>
-        {entry.suggestedCategory && <div className="suggestion"><Sparkles size={16} /><span>AI 建议新分类「{entry.suggestedCategory}」</span><button onClick={() => void acceptSuggestedCategory()}>确认创建</button></div>}
       </section>
 
       <section className="form-section roots-section">
@@ -599,8 +581,7 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
         {entry.rootMatches.length ? <div className="root-grid">{entry.rootMatches.map((match) => <button className="root-card" key={`${match.root}-${match.sourceAnchor}`} onClick={() => void window.api.roots.openSource(match.sourceAnchor)} aria-label={`在本地辞典中查看词根 ${match.root}`}><span className="root-card-top"><code lang="en">{match.root}</code><ExternalLink size={14} /></span><strong>{match.meaning}</strong>{match.formationNote && <p>{match.formationNote}</p>}<small>{match.matchedVia === 'lemma' ? '按原形匹配 · ' : ''}{match.sourceLabel}</small></button>)}</div> : <div className="root-empty"><Tag size={17} />该辞典暂未找到可核实的词根。</div>}
       </section>
 
-      <section className="form-section review-section">
-        <label className="check-field"><input type="checkbox" checked={draft.aiReviewed} onChange={(event) => editDraft({ ...draft, aiReviewed: event.target.checked })} />我已核对当前内容</label>
+      <section className="form-section actions-section">
         <div className="detail-actions"><button className="danger-button" onClick={() => void moveToTrash()}><Trash2 size={16} />移入回收站</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}{saving ? '保存中' : '保存修改'}</button></div>
       </section>
     </article>
@@ -626,7 +607,7 @@ function AddWordDialog({ motionState, onClose, onCreated, onToast }: { motionSta
       setCreating(false)
     }
   }
-  return <Dialog title="添加单词" motionState={motionState} onClose={requestClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">先收下单词；本地 AI 准备好后会自动补全 IPA、释义、分类建议和标签。</p><label>英文单词<input className="latin-field" lang="en" autoFocus data-initial-focus value={word} onChange={(event) => setWord(event.target.value)} placeholder="例如 vocabulary" /></label><div className="dialog-actions"><button type="button" className="text-button" onClick={requestClose}>取消</button><button className="primary-button" disabled={creating || !word.trim()}>{creating ? <LoaderCircle size={17} className="spin" /> : <Sparkles size={17} />}加入队列</button></div></form></Dialog>
+  return <Dialog title="添加单词" motionState={motionState} onClose={requestClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">先收下单词；本地 AI 准备好后会自动补全 IPA、释义、分类和标签。</p><label>英文单词<input className="latin-field" lang="en" autoFocus data-initial-focus value={word} onChange={(event) => setWord(event.target.value)} placeholder="例如 vocabulary" /></label><div className="dialog-actions"><button type="button" className="text-button" onClick={requestClose}>取消</button><button className="primary-button" disabled={creating || !word.trim()}>{creating ? <LoaderCircle size={17} className="spin" /> : <Sparkles size={17} />}加入队列</button></div></form></Dialog>
 }
 
 function CategoryDialog({ motionState, color, onClose, onCreate }: { motionState: MotionState; color: string; onClose: () => void; onCreate: (name: string) => Promise<void> }): ReactElement {
@@ -804,7 +785,7 @@ function WelcomeEmpty({ onAdd }: { onAdd: () => void }): ReactElement { return <
 
 function TrashEmpty(): ReactElement { return <div className="empty-detail"><span className="empty-emblem"><Trash2 size={28} /></span><h2>回收站是空的</h2><p>移入回收站的单词会暂存在这里，你可以逐个恢复或一次清空。</p></div> }
 
-function asDraft(entry: WordEntry): WordDraft { return { id: entry.id, word: entry.word, ipaUk: entry.ipaUk, senses: entry.senses.length ? entry.senses : [blankSense()], categoryId: entry.categoryId, tagNames: entry.tags.map((tag) => tag.name), aiReviewed: entry.aiReviewed } }
+function asDraft(entry: WordEntry): WordDraft { return { id: entry.id, word: entry.word, ipaUk: entry.ipaUk, senses: entry.senses.length ? entry.senses : [blankSense()], categoryId: entry.categoryId, tagNames: entry.tags.map((tag) => tag.name) } }
 function replaceSense(senses: WordSense[], index: number, replacement: WordSense): WordSense[] { return senses.map((sense, itemIndex) => (itemIndex === index ? replacement : sense)) }
 function useExitPresence(present: boolean, exitDuration: number): { rendered: boolean; state: MotionState } {
   const [rendered, setRendered] = useState(present)
