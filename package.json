@@ -1,6 +1,6 @@
 {
   "name": "shengciben",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "本地 AI 生词本",
   "main": "./out/main/index.js",
   "author": "",
