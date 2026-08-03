@@ -1,35 +1,12 @@
-import type { AiEnrichment, AppSettings, OllamaStatus } from '../shared/types'
-import { checkOllama, enrichWithOllama } from './ollama'
+import type { AiEnrichment, AppSettings, DeepSeekStatus } from '../shared/types'
 
 export interface AiProvider {
   readonly id: AppSettings['aiProvider']
-  check(settings: AppSettings): Promise<OllamaStatus>
+  check(settings: AppSettings): Promise<DeepSeekStatus>
   enrich(
     input: { settings: AppSettings; word: string; existingCategories: string[] },
-    status: OllamaStatus
+    status: DeepSeekStatus
   ): Promise<AiEnrichment>
-}
-
-export class OllamaProvider implements AiProvider {
-  readonly id = 'ollama'
-
-  check(settings: AppSettings): Promise<OllamaStatus> {
-    return checkOllama(settings.ollamaUrl)
-  }
-
-  enrich(
-    input: { settings: AppSettings; word: string; existingCategories: string[] },
-    status: OllamaStatus
-  ): Promise<AiEnrichment> {
-    const model = input.settings.ollamaModel || status.models[0]
-    if (!status.available || !model) throw new Error('Ollama 当前不可用或没有可用模型。')
-    return enrichWithOllama({
-      url: input.settings.ollamaUrl,
-      model,
-      word: input.word,
-      existingCategories: input.existingCategories
-    })
-  }
 }
 
 export class AiProviderRegistry {

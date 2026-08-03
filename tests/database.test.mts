@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
+import Database from 'better-sqlite3'
 import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { AppDatabase } from '../src/main/database.ts'
+import { AppDatabase, type SecretCodec } from '../src/main/database.ts'
 
 const createDatabase = () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-test-'))
@@ -18,7 +19,7 @@ const createDatabase = () => {
   }
 }
 
-test('manual save completes the AI task and keeps review state consistent', (context) => {
+test('manual save completes the AI task and marks the word ready', (context) => {
   const fixture = createDatabase()
   context.after(fixture.cleanup)
   const created = fixture.database.createWord('Vocabulary')
@@ -33,15 +34,106 @@ test('manual save completes the AI task and keeps review state consistent', (con
     ipaUk: 'vəˈkæbjələri',
     senses: [{ partOfSpeech: 'noun', definitionZh: '词汇' }],
     categoryId: created.entry.categoryId,
-    tagNames: ['考试'],
-    aiReviewed: true
+    tagNames: ['考试']
   })
 
   assert.equal(saved.status, 'ready')
-  assert.equal(saved.aiReviewed, true)
   assert.equal(fixture.database.isTaskProcessing(task.taskId), false)
   assert.equal(fixture.database.nextPendingTask(), null)
   assert.deepEqual(saved.senses.map((sense) => sense.definitionZh), ['词汇'])
+})
+
+test('AI enrichment is trusted immediately and creates its suggested category', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const created = fixture.database.createWord('Vocabulary')
+
+  fixture.database.applyEnrichment(created.entry.id, {
+    ipaUk: 'vəˈkæbjələri',
+    senses: [{ partOfSpeech: 'noun', definitionZh: '词汇' }],
+    suggestedCategory: '学术写作',
+    tagNames: ['考试']
+  })
+
+  const enriched = fixture.database.getWord(created.entry.id)
+  assert.equal(enriched?.status, 'ready')
+  assert.equal(enriched?.categoryName, '学术写作')
+  assert.deepEqual(enriched?.senses.map((sense) => sense.definitionZh), ['词汇'])
+  assert.deepEqual(enriched?.tags.map((tag) => tag.name), ['考试'])
+})
+
+test('legacy review records become ready when the database reopens', (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-review-migration-'))
+  const first = new AppDatabase(directory)
+  const created = first.createWord('Trusted')
+  first.close()
+
+  const raw = new Database(path.join(directory, 'shengciben.sqlite'))
+  raw
+    .prepare(`UPDATE words SET enrichment_status = 'needs_review', ai_reviewed = 0, suggested_category = 'AI 分类' WHERE id = ?`)
+    .run(created.entry.id)
+  raw.close()
+
+  const reopened = new AppDatabase(directory)
+  context.after(() => {
+    reopened.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  const migrated = reopened.getWord(created.entry.id)
+  assert.equal(migrated?.status, 'ready')
+  assert.equal(migrated?.categoryName, 'AI 分类')
+})
+
+test('legacy Ollama settings migrate to DeepSeek defaults', (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-deepseek-migration-'))
+  const first = new AppDatabase(directory)
+  first.close()
+
+  const raw = new Database(path.join(directory, 'shengciben.sqlite'))
+  raw.prepare(`UPDATE settings SET value = 'ollama' WHERE key = 'aiProvider'`).run()
+  raw.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('ollamaUrl', 'http://127.0.0.1:11434')`).run()
+  raw.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('ollamaModel', 'legacy-model')`).run()
+  raw.prepare(`DELETE FROM settings WHERE key IN ('deepseekApiUrl', 'deepseekModel', 'deepseekApiKey')`).run()
+  raw.close()
+
+  const reopened = new AppDatabase(directory)
+  context.after(() => {
+    reopened.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  assert.deepEqual(reopened.getSettings(), {
+    aiProvider: 'deepseek',
+    deepseekApiUrl: 'https://api.deepseek.com',
+    deepseekModel: 'deepseek-v4-flash',
+    deepseekApiKey: '',
+    dictionaryPath: ''
+  })
+})
+
+test('DeepSeek API key is encoded at rest and decoded through settings', (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-secret-'))
+  const codec: SecretCodec = {
+    encode: (value) => `encrypted:${value}`,
+    decode: (value) => value.replace(/^encrypted:/, '')
+  }
+  const database = new AppDatabase(directory, codec)
+  context.after(() => {
+    database.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  database.saveSettings({
+    ...database.getSettings(),
+    deepseekApiKey: 'sk-secret'
+  })
+
+  assert.equal(database.getSettings().deepseekApiKey, 'sk-secret')
+  const raw = new Database(path.join(directory, 'shengciben.sqlite'), { readonly: true })
+  const stored = raw.prepare(`SELECT value FROM settings WHERE key = 'deepseekApiKey'`).get() as { value: string }
+  raw.close()
+  assert.equal(stored.value, 'encrypted:sk-secret')
 })
 
 test('interrupted processing tasks return to pending when the database reopens', (context) => {

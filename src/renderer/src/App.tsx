@@ -24,11 +24,11 @@ import {
   X
 } from 'lucide-react'
 import type {
-  AppSettings,
+  AppSettingsView,
   Category,
+  DeepSeekStatus,
   EnrichmentStatus,
   ExportFormat,
-  OllamaStatus,
   QueueStatus,
   RootIndexStatus,
   WordCreateResult,
@@ -46,15 +46,13 @@ const CATEGORY_COLORS = ['#6e6e6e']
 const statusCopy: Record<EnrichmentStatus, string> = {
   pending: '待 AI 处理',
   processing: 'AI 处理中',
-  needs_review: '待核对',
-  ready: '已核对',
+  ready: '已完成',
   failed: '处理失败'
 }
 
 const statusTone: Record<EnrichmentStatus, string> = {
   pending: 'muted',
   processing: 'processing',
-  needs_review: 'review',
   ready: 'ready',
   failed: 'failed'
 }
@@ -294,8 +292,7 @@ export default function App(): ReactElement {
               <option value="all">全部状态</option>
               <option value="pending">待 AI 处理</option>
               <option value="processing">AI 处理中</option>
-              <option value="needs_review">待核对</option>
-              <option value="ready">已核对</option>
+              <option value="ready">已完成</option>
               <option value="failed">处理失败</option>
             </select>
             <button className="text-button" onClick={() => setSort((value) => (value === 'recent' ? 'alphabetical' : 'recent'))} aria-label={`当前按${sort === 'recent' ? '最近更新' : '字母顺序'}排列，点击切换`}>
@@ -537,20 +534,6 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
     onChanged()
   }
 
-  const acceptSuggestedCategory = async (): Promise<void> => {
-    if (!entry.suggestedCategory) return
-    try {
-      const category = await window.api.categories.create(entry.suggestedCategory, CATEGORY_COLORS[categories.length % CATEGORY_COLORS.length])
-      const saved = await window.api.words.save({ ...draft, categoryId: category.id })
-      setDraft(asDraft(saved))
-      setDirty(false)
-      onToast('success', `已创建并应用分类「${category.name}」。`)
-      onChanged()
-    } catch (error) {
-      onToast('error', messageOf(error))
-    }
-  }
-
   if (isTrash) {
     return (
       <div className="empty-detail trashed-detail">
@@ -564,7 +547,7 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
 
   return (
     <article className="detail-card">
-      <div className="detail-status-line"><StatusBadge status={entry.status} />{entry.aiReviewed && <span className="verified-note"><Check size={14} /> 已人工核对</span>}</div>
+      <div className="detail-status-line"><StatusBadge status={entry.status} /></div>
       {entry.aiError && <div className="inline-alert"><CircleAlert size={17} /><span>{entry.aiError}</span><button onClick={() => void retry()}><RefreshCw size={14} />重试</button></div>}
 
       <section className="form-section word-heading-section">
@@ -591,7 +574,6 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
           <label>主分类<select value={draft.categoryId} onChange={(event) => editDraft({ ...draft, categoryId: event.target.value })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
           <label>标签<input value={draft.tagNames.join('，')} onChange={(event) => editDraft({ ...draft, tagNames: event.target.value.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean) })} placeholder="用逗号分隔" /></label>
         </div>
-        {entry.suggestedCategory && <div className="suggestion"><Sparkles size={16} /><span>AI 建议新分类「{entry.suggestedCategory}」</span><button onClick={() => void acceptSuggestedCategory()}>确认创建</button></div>}
       </section>
 
       <section className="form-section roots-section">
@@ -599,8 +581,7 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
         {entry.rootMatches.length ? <div className="root-grid">{entry.rootMatches.map((match) => <button className="root-card" key={`${match.root}-${match.sourceAnchor}`} onClick={() => void window.api.roots.openSource(match.sourceAnchor)} aria-label={`在本地辞典中查看词根 ${match.root}`}><span className="root-card-top"><code lang="en">{match.root}</code><ExternalLink size={14} /></span><strong>{match.meaning}</strong>{match.formationNote && <p>{match.formationNote}</p>}<small>{match.matchedVia === 'lemma' ? '按原形匹配 · ' : ''}{match.sourceLabel}</small></button>)}</div> : <div className="root-empty"><Tag size={17} />该辞典暂未找到可核实的词根。</div>}
       </section>
 
-      <section className="form-section review-section">
-        <label className="check-field"><input type="checkbox" checked={draft.aiReviewed} onChange={(event) => editDraft({ ...draft, aiReviewed: event.target.checked })} />我已核对当前内容</label>
+      <section className="form-section actions-section">
         <div className="detail-actions"><button className="danger-button" onClick={() => void moveToTrash()}><Trash2 size={16} />移入回收站</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}{saving ? '保存中' : '保存修改'}</button></div>
       </section>
     </article>
@@ -626,7 +607,7 @@ function AddWordDialog({ motionState, onClose, onCreated, onToast }: { motionSta
       setCreating(false)
     }
   }
-  return <Dialog title="添加单词" motionState={motionState} onClose={requestClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">先收下单词；本地 AI 准备好后会自动补全 IPA、释义、分类建议和标签。</p><label>英文单词<input className="latin-field" lang="en" autoFocus data-initial-focus value={word} onChange={(event) => setWord(event.target.value)} placeholder="例如 vocabulary" /></label><div className="dialog-actions"><button type="button" className="text-button" onClick={requestClose}>取消</button><button className="primary-button" disabled={creating || !word.trim()}>{creating ? <LoaderCircle size={17} className="spin" /> : <Sparkles size={17} />}加入队列</button></div></form></Dialog>
+  return <Dialog title="添加单词" motionState={motionState} onClose={requestClose}><form onSubmit={(event) => void create(event)}><p className="dialog-description">先收下单词；DeepSeek 配置好后会自动补全 IPA、释义、分类和标签。</p><label>英文单词<input className="latin-field" lang="en" autoFocus data-initial-focus value={word} onChange={(event) => setWord(event.target.value)} placeholder="例如 vocabulary" /></label><div className="dialog-actions"><button type="button" className="text-button" onClick={requestClose}>取消</button><button className="primary-button" disabled={creating || !word.trim()}>{creating ? <LoaderCircle size={17} className="spin" /> : <Sparkles size={17} />}加入队列</button></div></form></Dialog>
 }
 
 function CategoryDialog({ motionState, color, onClose, onCreate }: { motionState: MotionState; color: string; onClose: () => void; onCreate: (name: string) => Promise<void> }): ReactElement {
@@ -649,9 +630,9 @@ function CategoryDialog({ motionState, color, onClose, onCreate }: { motionState
 }
 
 function SettingsDialog({ motionState, onClose, onToast }: { motionState: MotionState; onClose: () => void; onToast: (kind: 'success' | 'error', message: string) => void }): ReactElement {
-  const [settings, setSettings] = useState<AppSettings | null>(null)
-  const [initialSettings, setInitialSettings] = useState<AppSettings | null>(null)
-  const [ollama, setOllama] = useState<OllamaStatus | null>(null)
+  const [settings, setSettings] = useState<AppSettingsView | null>(null)
+  const [initialSettings, setInitialSettings] = useState<AppSettingsView | null>(null)
+  const [deepseek, setDeepseek] = useState<DeepSeekStatus | null>(null)
   const [rootStatus, setRootStatus] = useState<RootIndexStatus | null>(null)
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(false)
@@ -663,7 +644,7 @@ function SettingsDialog({ motionState, onClose, onToast }: { motionState: Motion
       setInitialSettings(nextSettings)
       setRootStatus(nextRoot)
       setChecking(true)
-      setOllama(await window.api.ollama.check(nextSettings.ollamaUrl))
+      setDeepseek(await window.api.deepseek.check(nextSettings))
     } catch (error) {
       onToast('error', messageOf(error))
     } finally {
@@ -677,7 +658,7 @@ function SettingsDialog({ motionState, onClose, onToast }: { motionState: Motion
     if (!settings) return
     setChecking(true)
     try {
-      setOllama(await window.api.ollama.check(settings.ollamaUrl))
+      setDeepseek(await window.api.deepseek.check(settings))
     } catch (error) {
       onToast('error', messageOf(error))
     } finally {
@@ -699,7 +680,7 @@ function SettingsDialog({ motionState, onClose, onToast }: { motionState: Motion
       setInitialSettings(saved)
       onToast('success', '设置已保存。')
       setChecking(true)
-      setOllama(await window.api.ollama.check(saved.ollamaUrl))
+      setDeepseek(await window.api.deepseek.check(saved))
     } catch (error) {
       onToast('error', messageOf(error))
     } finally {
@@ -736,8 +717,10 @@ function SettingsDialog({ motionState, onClose, onToast }: { motionState: Motion
     }
   }
 
+  const modelOptions = settings ? [...new Set([settings.deepseekModel, ...(deepseek?.models ?? [])].filter(Boolean))] : []
+
   return <Dialog title="设置" motionState={motionState} onClose={requestClose} wide>{!settings ? <ListLoading /> : <div className="settings-stack">
-    <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h3>本地 AI</h3><p>{checking ? '正在检查 Ollama…' : ollama?.message ?? '尚未检测 Ollama。'}</p></div><span className={`connection-dot ${ollama?.available ? 'online' : ''}`} /></div><label>Ollama 地址<input className="latin-field" value={settings.ollamaUrl} onChange={(event) => setSettings({ ...settings, ollamaUrl: event.target.value })} /></label><label>默认模型<select value={settings.ollamaModel} onChange={(event) => setSettings({ ...settings, ollamaModel: event.target.value })}><option value="">自动选择第一个可用模型</option>{ollama?.models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><button className="outline-button" disabled={checking} onClick={() => void checkConnection()}>{checking ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}重新检测当前地址</button></section>
+    <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h3>DeepSeek AI</h3><p>{checking ? '正在检查 DeepSeek…' : deepseek?.message ?? '尚未检测 DeepSeek。'}</p></div><span className={`connection-dot ${deepseek?.available ? 'online' : ''}`} /></div><label>API Key<input className="latin-field" type="password" autoComplete="new-password" value={settings.deepseekApiKey} placeholder={settings.hasDeepseekApiKey ? '已安全保存；留空则不修改' : 'sk-…'} onChange={(event) => setSettings({ ...settings, deepseekApiKey: event.target.value, clearDeepseekApiKey: false })} /></label><label>API 地址<input className="latin-field" value={settings.deepseekApiUrl} onChange={(event) => setSettings({ ...settings, deepseekApiUrl: event.target.value })} /></label><label>默认模型<select value={settings.deepseekModel} onChange={(event) => setSettings({ ...settings, deepseekModel: event.target.value })}>{modelOptions.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><div className="setting-buttons"><button className="outline-button" disabled={checking} onClick={() => void checkConnection()}>{checking ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}检测 DeepSeek</button><button className="text-button" disabled={!settings.hasDeepseekApiKey && !settings.deepseekApiKey} onClick={() => setSettings({ ...settings, deepseekApiKey: '', hasDeepseekApiKey: false, clearDeepseekApiKey: true })}>清除 API Key</button></div></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Database size={18} /></span><div><h3>词根辞典</h3><p>{rootStatus?.message ?? '正在读取索引状态…'}</p></div></div><label>HTML 文件<input value={settings.dictionaryPath} onChange={(event) => setSettings({ ...settings, dictionaryPath: event.target.value })} /></label><div className="setting-buttons"><button className="outline-button" onClick={() => void chooseDictionary()}>选择文件</button><button className="outline-button" onClick={() => void rebuildIndex()}><RefreshCw size={15} />重建索引{rootStatus?.ready ? ` · ${rootStatus.indexedWords} 词` : ''}</button></div></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><FileDown size={18} /></span><div><h3>数据与备份</h3><p>数据库每小时检查跨日备份，保留最近 7 份。</p></div></div><div className="setting-buttons"><button className="outline-button" onClick={() => void window.api.data.openFolder()}>打开数据目录</button><button className="outline-button" onClick={() => void exportData('json')}>导出 JSON</button><button className="outline-button" onClick={() => void exportData('csv')}>导出 CSV</button><button className="outline-button" onClick={() => void exportData('sqlite')}>导出 SQLite</button></div></section>
     <div className="dialog-actions"><button className="text-button" onClick={requestClose}>关闭</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle size={17} className="spin" /> : <Check size={17} />}保存设置</button></div>
@@ -804,7 +787,7 @@ function WelcomeEmpty({ onAdd }: { onAdd: () => void }): ReactElement { return <
 
 function TrashEmpty(): ReactElement { return <div className="empty-detail"><span className="empty-emblem"><Trash2 size={28} /></span><h2>回收站是空的</h2><p>移入回收站的单词会暂存在这里，你可以逐个恢复或一次清空。</p></div> }
 
-function asDraft(entry: WordEntry): WordDraft { return { id: entry.id, word: entry.word, ipaUk: entry.ipaUk, senses: entry.senses.length ? entry.senses : [blankSense()], categoryId: entry.categoryId, tagNames: entry.tags.map((tag) => tag.name), aiReviewed: entry.aiReviewed } }
+function asDraft(entry: WordEntry): WordDraft { return { id: entry.id, word: entry.word, ipaUk: entry.ipaUk, senses: entry.senses.length ? entry.senses : [blankSense()], categoryId: entry.categoryId, tagNames: entry.tags.map((tag) => tag.name) } }
 function replaceSense(senses: WordSense[], index: number, replacement: WordSense): WordSense[] { return senses.map((sense, itemIndex) => (itemIndex === index ? replacement : sense)) }
 function useExitPresence(present: boolean, exitDuration: number): { rendered: boolean; state: MotionState } {
   const [rendered, setRendered] = useState(present)

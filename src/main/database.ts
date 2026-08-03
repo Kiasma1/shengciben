@@ -18,10 +18,21 @@ import type {
 
 const UNCATEGORIZED_ID = 'uncategorized'
 const DEFAULT_SETTINGS: AppSettings = {
-  aiProvider: 'ollama',
-  ollamaUrl: 'http://127.0.0.1:11434',
-  ollamaModel: '',
+  aiProvider: 'deepseek',
+  deepseekApiUrl: 'https://api.deepseek.com',
+  deepseekModel: 'deepseek-v4-flash',
+  deepseekApiKey: '',
   dictionaryPath: ''
+}
+
+export interface SecretCodec {
+  encode(value: string): string
+  decode(value: string): string
+}
+
+const identitySecretCodec: SecretCodec = {
+  encode: (value) => value,
+  decode: (value) => value
 }
 
 type WordRow = {
@@ -34,8 +45,6 @@ type WordRow = {
   category_color: string
   enrichment_status: EnrichmentStatus
   ai_error: string | null
-  ai_reviewed: number
-  suggested_category: string | null
   is_deleted: number
   created_at: string
   updated_at: string
@@ -46,11 +55,13 @@ const normalizeWord = (value: string): string => value.trim().toLocaleLowerCase(
 
 export class AppDatabase {
   private readonly db: Database.Database
+  private readonly secretCodec: SecretCodec
   readonly directory: string
   readonly filePath: string
 
-  constructor(directory: string) {
+  constructor(directory: string, secretCodec: SecretCodec = identitySecretCodec) {
     this.directory = directory
+    this.secretCodec = secretCodec
     mkdirSync(directory, { recursive: true })
     this.filePath = path.join(directory, 'shengciben.sqlite')
     this.db = new Database(this.filePath)
@@ -140,8 +151,22 @@ export class AppDatabase {
     }
 
     this.db.transaction(() => {
+      this.db.prepare(`UPDATE settings SET value = 'deepseek' WHERE key = 'aiProvider'`).run()
+      this.db.prepare(`DELETE FROM settings WHERE key IN ('ollamaUrl', 'ollamaModel')`).run()
       this.db.prepare(`UPDATE tasks SET status = 'pending', error = NULL, updated_at = ? WHERE status = 'processing'`).run(now())
       this.db.prepare(`UPDATE words SET enrichment_status = 'pending', ai_error = NULL, updated_at = ? WHERE enrichment_status = 'processing'`).run(now())
+      const legacySuggestions = this.db
+        .prepare(`SELECT id, trim(suggested_category) AS categoryName FROM words WHERE enrichment_status = 'needs_review' AND category_id = ? AND trim(coalesce(suggested_category, '')) <> ''`)
+        .all(UNCATEGORIZED_ID) as { id: string; categoryName: string }[]
+      const insertCategory = this.db.prepare('INSERT OR IGNORE INTO categories (id, name, color, created_at) VALUES (?, ?, ?, ?)')
+      const findCategory = this.db.prepare('SELECT id FROM categories WHERE name = ? COLLATE NOCASE')
+      const applyCategory = this.db.prepare('UPDATE words SET category_id = ? WHERE id = ?')
+      for (const suggestion of legacySuggestions) {
+        insertCategory.run(randomUUID(), suggestion.categoryName, '#6e6e6e', now())
+        const category = findCategory.get(suggestion.categoryName) as { id: string }
+        applyCategory.run(category.id, suggestion.id)
+      }
+      this.db.prepare(`UPDATE words SET enrichment_status = 'ready', ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE enrichment_status = 'needs_review'`).run(now())
     })()
   }
 
@@ -239,14 +264,12 @@ export class AppDatabase {
     const update = this.db.transaction(() => {
       try {
         this.db
-          .prepare(`UPDATE words SET word = ?, normalized_word = ?, ipa_uk = ?, category_id = ?, enrichment_status = ?, ai_error = NULL, ai_reviewed = ?, suggested_category = NULL, updated_at = ? WHERE id = ?`)
+          .prepare(`UPDATE words SET word = ?, normalized_word = ?, ipa_uk = ?, category_id = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
           .run(
             word,
             normalizedWord,
             draft.ipaUk.trim(),
             draft.categoryId,
-            draft.aiReviewed ? 'ready' : 'needs_review',
-            draft.aiReviewed ? 1 : 0,
             now(),
             draft.id
           )
@@ -315,13 +338,18 @@ export class AppDatabase {
   getSettings(): AppSettings {
     const rows = this.db.prepare('SELECT key, value FROM settings').all() as { key: keyof AppSettings; value: string }[]
     const entries = rows.map((row) => [row.key, row.value])
-    return { ...DEFAULT_SETTINGS, ...Object.fromEntries(entries) } as AppSettings
+    const settings = { ...DEFAULT_SETTINGS, ...Object.fromEntries(entries) } as AppSettings
+    settings.deepseekApiKey = settings.deepseekApiKey ? this.secretCodec.decode(settings.deepseekApiKey) : ''
+    return settings
   }
 
   saveSettings(settings: AppSettings): AppSettings {
     const statement = this.db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
     const transaction = this.db.transaction(() => {
-      for (const [key, value] of Object.entries(settings)) statement.run(key, value.trim())
+      for (const [key, value] of Object.entries(settings)) {
+        const cleanValue = value.trim()
+        statement.run(key, key === 'deepseekApiKey' && cleanValue ? this.secretCodec.encode(cleanValue) : cleanValue)
+      }
     })
     transaction()
     return this.getSettings()
@@ -372,14 +400,19 @@ export class AppDatabase {
   applyEnrichment(wordId: string, result: { ipaUk: string; senses: WordSense[]; suggestedCategory: string | null; tagNames: string[] }): void {
     const transaction = this.db.transaction(() => {
       const current = this.getWord(wordId)
-      const category = result.suggestedCategory
-        ? (this.db.prepare('SELECT id FROM categories WHERE name = ? COLLATE NOCASE').get(result.suggestedCategory) as { id: string } | undefined)
-        : undefined
-      const categoryId = current?.categoryId && current.categoryId !== UNCATEGORIZED_ID ? current.categoryId : category?.id ?? UNCATEGORIZED_ID
-      const suggestedCategory = categoryId === UNCATEGORIZED_ID && !category ? result.suggestedCategory : null
+      let categoryId = current?.categoryId && current.categoryId !== UNCATEGORIZED_ID ? current.categoryId : UNCATEGORIZED_ID
+      const categoryName = result.suggestedCategory?.trim()
+      if (categoryId === UNCATEGORIZED_ID && categoryName) {
+        this.db
+          .prepare('INSERT OR IGNORE INTO categories (id, name, color, created_at) VALUES (?, ?, ?, ?)')
+          .run(randomUUID(), categoryName, '#6e6e6e', now())
+        categoryId = (
+          this.db.prepare('SELECT id FROM categories WHERE name = ? COLLATE NOCASE').get(categoryName) as { id: string }
+        ).id
+      }
       this.db
-        .prepare(`UPDATE words SET ipa_uk = ?, category_id = ?, enrichment_status = 'needs_review', ai_error = NULL, ai_reviewed = 0, suggested_category = ?, updated_at = ? WHERE id = ?`)
-        .run(result.ipaUk, categoryId, suggestedCategory, now(), wordId)
+        .prepare(`UPDATE words SET ipa_uk = ?, category_id = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
+        .run(result.ipaUk, categoryId, now(), wordId)
       this.replaceSenses(wordId, result.senses)
       this.replaceTags(wordId, result.tagNames)
     })
@@ -462,8 +495,6 @@ export class AppDatabase {
       rootMatches,
       status: row.enrichment_status,
       aiError: row.ai_error,
-      aiReviewed: Boolean(row.ai_reviewed),
-      suggestedCategory: row.suggested_category,
       isDeleted: Boolean(row.is_deleted),
       createdAt: row.created_at,
       updatedAt: row.updated_at
