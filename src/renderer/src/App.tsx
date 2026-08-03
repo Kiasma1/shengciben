@@ -29,7 +29,9 @@ import type {
   DeepSeekStatus,
   EnrichmentStatus,
   ExportFormat,
+  MorphemeKind,
   QueueStatus,
+  RootMatch,
   RootIndexStatus,
   WordCreateResult,
   WordDraft,
@@ -57,7 +59,22 @@ const statusTone: Record<EnrichmentStatus, string> = {
   failed: 'failed'
 }
 
+const morphemeKindCopy: Record<MorphemeKind, string> = {
+  prefix: '前缀',
+  root: '词根',
+  suffix: '后缀'
+}
+
 const blankSense = (): WordSense => ({ partOfSpeech: '', definitionZh: '' })
+
+const canAutosaveDraft = (draft: WordDraft): boolean => {
+  if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(draft.word.trim()) || !draft.categoryId) return false
+  return draft.senses.every((sense) => {
+    const hasPartOfSpeech = Boolean(sense.partOfSpeech.trim())
+    const hasDefinition = Boolean(sense.definitionZh.trim())
+    return hasPartOfSpeech === hasDefinition
+  })
+}
 
 export default function App(): ReactElement {
   const [entries, setEntries] = useState<WordEntry[]>([])
@@ -478,10 +495,33 @@ function StatusBadge({ status }: { status: EnrichmentStatus }): ReactElement {
   return <span className={`status-badge ${statusTone[status]}`}>{status === 'processing' && <LoaderCircle size={12} className="spin" />}{statusCopy[status]}</span>
 }
 
+function MorphemeCard({ match }: { match: RootMatch }): ReactElement {
+  const detailParts = [
+    match.surfaceForm !== match.root ? `词中形式 ${match.surfaceForm}` : '',
+    match.matchedVia === 'lemma' ? '按原形匹配' : '',
+    match.source === 'dictionary' ? match.sourceLabel : ''
+  ].filter(Boolean)
+  const content = <>
+    <span className="root-card-top"><code lang="en">{match.root}</code>{match.source === 'dictionary' && match.sourceAnchor && <ExternalLink size={14} />}</span>
+    <span className="morpheme-meta"><span>{morphemeKindCopy[match.kind]}</span><span>{match.source === 'dictionary' ? '本地辞典' : 'AI 解析'}</span></span>
+    <strong>{match.meaning}</strong>
+    {match.formationNote && <p>{match.formationNote}</p>}
+    {detailParts.length > 0 && <small>{detailParts.join(' · ')}</small>}
+  </>
+  if (match.source === 'dictionary' && match.sourceAnchor) {
+    return <button className="root-card" data-source="dictionary" onClick={() => void window.api.roots.openSource(match.sourceAnchor)} aria-label={`在本地辞典中查看${morphemeKindCopy[match.kind]} ${match.root}`}>{content}</button>
+  }
+  return <div className="root-card" data-source="ai">{content}</div>
+}
+
 function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyChange }: { entry: WordEntry; categories: Category[]; isTrash: boolean; onChanged: () => void; onToast: (kind: 'success' | 'error', message: string) => void; onDirtyChange: (dirty: boolean) => void }): ReactElement {
   const [draft, setDraft] = useState<WordDraft>(() => asDraft(entry))
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const latestDraftRef = useRef(draft)
+  const editVersionRef = useRef(0)
+  const savingRef = useRef(false)
 
   useEffect(() => {
     onDirtyChange(dirty)
@@ -490,30 +530,56 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
 
   useEffect(() => {
     if (draft.id !== entry.id || !dirty) {
-      setDraft(asDraft(entry))
-      if (draft.id !== entry.id) setDirty(false)
+      const nextDraft = asDraft(entry)
+      latestDraftRef.current = nextDraft
+      setDraft(nextDraft)
+      if (draft.id !== entry.id) {
+        editVersionRef.current += 1
+        setDirty(false)
+        setSaveError(null)
+      }
     }
   }, [entry])
 
   const editDraft = (nextDraft: WordDraft): void => {
+    latestDraftRef.current = nextDraft
+    editVersionRef.current += 1
     setDraft(nextDraft)
     setDirty(true)
+    setSaveError(null)
   }
 
-  const save = async (): Promise<void> => {
+  const save = async (snapshot: WordDraft, version: number): Promise<void> => {
+    if (savingRef.current) return
+    savingRef.current = true
     setSaving(true)
     try {
-      const saved = await window.api.words.save(draft)
-      setDraft(asDraft(saved))
-      setDirty(false)
-      onToast('success', '单词已保存。')
+      const saved = await window.api.words.save(snapshot)
+      if (editVersionRef.current === version) {
+        const savedDraft = asDraft(saved)
+        latestDraftRef.current = savedDraft
+        setDraft(savedDraft)
+        setDirty(false)
+      }
+      setSaveError(null)
       onChanged()
     } catch (error) {
-      onToast('error', messageOf(error))
+      const message = messageOf(error)
+      setSaveError(message)
+      onToast('error', `自动保存失败：${message}`)
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
+
+  useEffect(() => {
+    if (!dirty || saving || saveError || !canAutosaveDraft(draft)) return
+    const timer = window.setTimeout(() => {
+      void save(latestDraftRef.current, editVersionRef.current)
+    }, 900)
+    return () => window.clearTimeout(timer)
+  }, [draft, dirty, saveError, saving])
 
   const retry = async (): Promise<void> => {
     await window.api.queue.retry(entry.id)
@@ -547,7 +613,7 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
 
   return (
     <article className="detail-card">
-      <div className="detail-status-line"><StatusBadge status={entry.status} /></div>
+      <div className="detail-status-line"><StatusBadge status={entry.status} /><span className={`autosave-status${saveError ? ' error' : ''}`}>{saveError ? '自动保存失败' : saving ? '自动保存中…' : dirty ? (canAutosaveDraft(draft) ? '修改待保存' : '填写完整后自动保存') : '已自动保存'}</span></div>
       {entry.aiError && <div className="inline-alert"><CircleAlert size={17} /><span>{entry.aiError}</span><button onClick={() => void retry()}><RefreshCw size={14} />重试</button></div>}
 
       <section className="form-section word-heading-section">
@@ -577,12 +643,23 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
       </section>
 
       <section className="form-section roots-section">
-        <div className="section-title"><div><p className="eyebrow">词源</p><h2>词根关联</h2></div><span className="source-label">来自本地辞典</span></div>
-        {entry.rootMatches.length ? <div className="root-grid">{entry.rootMatches.map((match) => <button className="root-card" key={`${match.root}-${match.sourceAnchor}`} onClick={() => void window.api.roots.openSource(match.sourceAnchor)} aria-label={`在本地辞典中查看词根 ${match.root}`}><span className="root-card-top"><code lang="en">{match.root}</code><ExternalLink size={14} /></span><strong>{match.meaning}</strong>{match.formationNote && <p>{match.formationNote}</p>}<small>{match.matchedVia === 'lemma' ? '按原形匹配 · ' : ''}{match.sourceLabel}</small></button>)}</div> : <div className="root-empty"><Tag size={17} />该辞典暂未找到可核实的词根。</div>}
+        <div className="section-title"><div><p className="eyebrow">词源</p><h2>词素与构词</h2></div><div className="section-title-actions"><span className="source-label">本地辞典 + AI</span><button className="outline-button" disabled={entry.status === 'pending' || entry.status === 'processing'} onClick={() => void retry()}><RefreshCw size={14} />重新分析</button></div></div>
+        {entry.rootMatches.length ? <>
+          <div className="morpheme-chain" aria-label={`${entry.word} 的构词链`}>
+            <span className="morpheme-parts">{entry.rootMatches.map((match, index) => <span className="morpheme-part" key={`${match.root}-${match.sortOrder}`}><code lang="en">{match.surfaceForm || match.root}</code>{index < entry.rootMatches.length - 1 && <span aria-hidden="true">＋</span>}</span>)}</span>
+            <span className="morpheme-arrow" aria-hidden="true">→</span>
+            <code className="morpheme-word" lang="en">{entry.word}</code>
+          </div>
+          {entry.formationSummary && <p className="formation-summary">{entry.formationSummary}</p>}
+          <details className="morpheme-details" open>
+            <summary>查看词素详情 <span>{entry.rootMatches.length} 个构词成分</span></summary>
+            <div className="root-grid">{entry.rootMatches.map((match) => <MorphemeCard key={`${match.root}-${match.sourceAnchor}-${match.sortOrder}`} match={match} />)}</div>
+          </details>
+        </> : <div className="root-empty"><Tag size={17} />{entry.status === 'pending' || entry.status === 'processing' ? 'DeepSeek 正在分析该词的构词结构。' : '没有足够依据进行可靠拆分。'}</div>}
       </section>
 
       <section className="form-section actions-section">
-        <div className="detail-actions"><button className="danger-button" onClick={() => void moveToTrash()}><Trash2 size={16} />移入回收站</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}{saving ? '保存中' : '保存修改'}</button></div>
+        <div className="detail-actions"><button className="danger-button" onClick={() => void moveToTrash()}><Trash2 size={16} />移入回收站</button></div>
       </section>
     </article>
   )
@@ -636,6 +713,7 @@ function SettingsDialog({ motionState, onClose, onToast }: { motionState: Motion
   const [rootStatus, setRootStatus] = useState<RootIndexStatus | null>(null)
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [reanalysing, setReanalysing] = useState(false)
 
   const load = async (): Promise<void> => {
     try {
@@ -717,10 +795,23 @@ function SettingsDialog({ motionState, onClose, onToast }: { motionState: Motion
     }
   }
 
+  const reanalyseAll = async (): Promise<void> => {
+    if (!window.confirm('重新分析全部单词会逐个调用 DeepSeek，并替换现有 AI 词素分析。继续吗？')) return
+    setReanalysing(true)
+    try {
+      const count = await window.api.queue.reanalyseAll()
+      onToast('success', `${count} 个单词已加入后台分析队列。`)
+    } catch (error) {
+      onToast('error', messageOf(error))
+    } finally {
+      setReanalysing(false)
+    }
+  }
+
   const modelOptions = settings ? [...new Set([settings.deepseekModel, ...(deepseek?.models ?? [])].filter(Boolean))] : []
 
   return <Dialog title="设置" motionState={motionState} onClose={requestClose} wide>{!settings ? <ListLoading /> : <div className="settings-stack">
-    <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h3>DeepSeek AI</h3><p>{checking ? '正在检查 DeepSeek…' : deepseek?.message ?? '尚未检测 DeepSeek。'}</p></div><span className={`connection-dot ${deepseek?.available ? 'online' : ''}`} /></div><label>API Key<input className="latin-field" type="password" autoComplete="new-password" value={settings.deepseekApiKey} placeholder={settings.hasDeepseekApiKey ? '已安全保存；留空则不修改' : 'sk-…'} onChange={(event) => setSettings({ ...settings, deepseekApiKey: event.target.value, clearDeepseekApiKey: false })} /></label><label>API 地址<input className="latin-field" value={settings.deepseekApiUrl} onChange={(event) => setSettings({ ...settings, deepseekApiUrl: event.target.value })} /></label><label>默认模型<select value={settings.deepseekModel} onChange={(event) => setSettings({ ...settings, deepseekModel: event.target.value })}>{modelOptions.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><div className="setting-buttons"><button className="outline-button" disabled={checking} onClick={() => void checkConnection()}>{checking ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}检测 DeepSeek</button><button className="text-button" disabled={!settings.hasDeepseekApiKey && !settings.deepseekApiKey} onClick={() => setSettings({ ...settings, deepseekApiKey: '', hasDeepseekApiKey: false, clearDeepseekApiKey: true })}>清除 API Key</button></div></section>
+    <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h3>DeepSeek AI</h3><p>{checking ? '正在检查 DeepSeek…' : deepseek?.message ?? '尚未检测 DeepSeek。'}</p></div><span className={`connection-dot ${deepseek?.available ? 'online' : ''}`} /></div><label>API Key<input className="latin-field" type="password" autoComplete="new-password" value={settings.deepseekApiKey} placeholder={settings.hasDeepseekApiKey ? '已安全保存；留空则不修改' : 'sk-…'} onChange={(event) => setSettings({ ...settings, deepseekApiKey: event.target.value, clearDeepseekApiKey: false })} /></label><label>API 地址<input className="latin-field" value={settings.deepseekApiUrl} onChange={(event) => setSettings({ ...settings, deepseekApiUrl: event.target.value })} /></label><label>默认模型<select value={settings.deepseekModel} onChange={(event) => setSettings({ ...settings, deepseekModel: event.target.value })}>{modelOptions.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><div className="setting-buttons"><button className="outline-button" disabled={checking} onClick={() => void checkConnection()}>{checking ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}检测 DeepSeek</button><button className="outline-button" disabled={reanalysing} onClick={() => void reanalyseAll()}>{reanalysing ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}重新分析全部</button><button className="text-button" disabled={!settings.hasDeepseekApiKey && !settings.deepseekApiKey} onClick={() => setSettings({ ...settings, deepseekApiKey: '', hasDeepseekApiKey: false, clearDeepseekApiKey: true })}>清除 API Key</button></div></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Database size={18} /></span><div><h3>词根辞典</h3><p>{rootStatus?.message ?? '正在读取索引状态…'}</p></div></div><label>HTML 文件<input value={settings.dictionaryPath} onChange={(event) => setSettings({ ...settings, dictionaryPath: event.target.value })} /></label><div className="setting-buttons"><button className="outline-button" onClick={() => void chooseDictionary()}>选择文件</button><button className="outline-button" onClick={() => void rebuildIndex()}><RefreshCw size={15} />重建索引{rootStatus?.ready ? ` · ${rootStatus.indexedWords} 词` : ''}</button></div></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><FileDown size={18} /></span><div><h3>数据与备份</h3><p>数据库每小时检查跨日备份，保留最近 7 份。</p></div></div><div className="setting-buttons"><button className="outline-button" onClick={() => void window.api.data.openFolder()}>打开数据目录</button><button className="outline-button" onClick={() => void exportData('json')}>导出 JSON</button><button className="outline-button" onClick={() => void exportData('csv')}>导出 CSV</button><button className="outline-button" onClick={() => void exportData('sqlite')}>导出 SQLite</button></div></section>
     <div className="dialog-actions"><button className="text-button" onClick={requestClose}>关闭</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle size={17} className="spin" /> : <Check size={17} />}保存设置</button></div>

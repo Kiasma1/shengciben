@@ -1,8 +1,8 @@
 import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { RootIndexStatus, RootMatch } from '../shared/types'
+import type { AiMorpheme, RootIndexStatus, RootMatch } from '../shared/types'
 
-type IndexedRoot = Omit<RootMatch, 'matchedVia'>
+type IndexedRoot = Pick<RootMatch, 'root' | 'meaning' | 'formationNote' | 'sourceAnchor' | 'sourceLabel'>
 type DictionaryExample = {
   word: string
   formationNote: string
@@ -31,9 +31,10 @@ type IndexFile = {
   sourceMtimeMs: number
   updatedAt: string
   entries: Record<string, IndexedRoot[]>
+  roots: Record<string, IndexedRoot>
 }
 
-const INDEX_VERSION = 9
+const INDEX_VERSION = 10
 const decodeHtml = (value: string): string =>
   value
     .replace(/&nbsp;/g, ' ')
@@ -66,6 +67,14 @@ const rootForms = (value: string): string[] =>
     .split(/[,、/]/)
     .map((form) => form.trim())
     .filter(Boolean)
+const sameRootFamily = (
+  left: Pick<RootMatch, 'root' | 'sourceAnchor'>,
+  right: Pick<RootMatch, 'root' | 'sourceAnchor'>
+): boolean => {
+  if (left.sourceAnchor && left.sourceAnchor === right.sourceAnchor) return true
+  const leftForms = new Set(rootForms(left.root).map((form) => rootLookupIdentity(form).replace(/-/g, '')))
+  return rootForms(right.root).some((form) => leftForms.has(rootLookupIdentity(form).replace(/-/g, '')))
+}
 const isRootHeading = (value: string): boolean => {
   const forms = rootForms(value)
   return Boolean(forms.length && forms.every((form) => /^-?[a-z][a-z0-9¹²³⁴⁵⁶⁷⁸⁹-]*$/i.test(form)))
@@ -235,6 +244,51 @@ export class RootIndexer {
     return []
   }
 
+  async reconcile(word: string, morphemes: AiMorpheme[], sourcePath: string): Promise<RootMatch[]> {
+    await this.ensure(sourcePath)
+    const directMatches = await this.match(word, sourcePath)
+    const candidates = morphemes.map((morpheme, sortOrder): RootMatch => {
+      const candidateForms = [...rootForms(morpheme.canonicalForm), ...rootForms(morpheme.form)]
+      const dictionaryMatch = candidateForms
+        .map((form) => this.index?.roots[rootLookupIdentity(form)])
+        .find((match): match is IndexedRoot => Boolean(match))
+      if (dictionaryMatch) {
+        return {
+          ...dictionaryMatch,
+          surfaceForm: morpheme.form,
+          kind: morpheme.kind,
+          source: 'dictionary',
+          matchedVia: 'morpheme',
+          sortOrder
+        }
+      }
+      return {
+        root: morpheme.canonicalForm,
+        surfaceForm: morpheme.form,
+        kind: morpheme.kind,
+        meaning: morpheme.meaning,
+        formationNote: '',
+        source: 'ai',
+        sourceAnchor: '',
+        sourceLabel: 'AI 解析',
+        matchedVia: 'ai',
+        sortOrder
+      }
+    })
+    const resolved: RootMatch[] = []
+    for (const candidate of candidates) {
+      if (!resolved.some((existing) => sameRootFamily(existing, candidate))) {
+        resolved.push({ ...candidate, sortOrder: resolved.length })
+      }
+    }
+
+    for (const match of directMatches) {
+      const duplicate = resolved.some((existing) => sameRootFamily(existing, match))
+      if (!duplicate) resolved.push({ ...match, sortOrder: resolved.length })
+    }
+    return resolved
+  }
+
   currentStatus(sourcePath: string): RootIndexStatus {
     if (!this.index || this.index.sourcePath !== sourcePath) return this.status(sourcePath, '尚未建立词根索引。')
     return this.status(sourcePath, '词根索引已就绪。')
@@ -252,13 +306,14 @@ export class RootIndexer {
   private async build(sourcePath: string, sourceMtimeMs: number): Promise<void> {
     const html = await fs.readFile(sourcePath, 'utf8')
     const markup = this.extractMarkup(html)
-    const entries = this.parseEntries(markup)
+    const { entries, roots } = this.parseEntries(markup)
     this.index = {
       version: INDEX_VERSION,
       sourcePath,
       sourceMtimeMs,
       updatedAt: new Date().toISOString(),
-      entries
+      entries,
+      roots
     }
     const temporaryPath = `${this.indexPath}.tmp`
     await fs.writeFile(temporaryPath, JSON.stringify(this.index), 'utf8')
@@ -279,7 +334,7 @@ export class RootIndexer {
     return chunks.length ? chunks.join('\n') : html
   }
 
-  private parseEntries(markup: string): Record<string, IndexedRoot[]> {
+  private parseEntries(markup: string): { entries: Record<string, IndexedRoot[]>; roots: Record<string, IndexedRoot> } {
     const entries = new Map<string, IndexedRoot[]>()
     const rootMetadata = new Map<string, IndexedRoot>()
     const parsedSections: ParsedRootSection[] = []
@@ -420,7 +475,10 @@ export class RootIndexer {
       }
       entries.set(key, existing)
     }
-    return Object.fromEntries(entries)
+    return {
+      entries: Object.fromEntries(entries),
+      roots: Object.fromEntries(rootMetadata)
+    }
   }
 
   private extractInlineRootSections(section: string, currentRoot: string, parentAnchor: string): InlineRootSection[] {
@@ -683,7 +741,14 @@ export class RootIndexer {
         uniqueMatches[duplicateIndex] = match
       }
     }
-    return uniqueMatches.map((match) => ({ ...match, matchedVia }))
+    return uniqueMatches.map((match, sortOrder) => ({
+      ...match,
+      surfaceForm: match.root,
+      kind: 'root',
+      source: 'dictionary',
+      matchedVia,
+      sortOrder
+    }))
   }
 
   private status(sourcePath: string, message: string): RootIndexStatus {

@@ -55,7 +55,9 @@ async function refreshRootMatches(wordId: string): Promise<void> {
   const entry = database.getWord(wordId)
   if (!entry) return
   const settings = database.getSettings()
-  const matches = await rootIndexer.match(entry.word, settings.dictionaryPath)
+  const matches = entry.aiMorphemes.length
+    ? await rootIndexer.reconcile(entry.word, entry.aiMorphemes, settings.dictionaryPath)
+    : await rootIndexer.match(entry.word, settings.dictionaryPath)
   database.setRootMatches(wordId, matches)
   notifyChanged()
 }
@@ -63,8 +65,12 @@ async function refreshRootMatches(wordId: string): Promise<void> {
 async function refreshAllRootMatches(): Promise<void> {
   const settings = database.getSettings()
   await rootIndexer.ensure(settings.dictionaryPath)
-  for (const entry of database.listRootRefreshTargets()) {
-    const matches = await rootIndexer.match(entry.word, settings.dictionaryPath)
+  for (const target of database.listRootRefreshTargets()) {
+    const entry = database.getWord(target.id)
+    if (!entry) continue
+    const matches = entry.aiMorphemes.length
+      ? await rootIndexer.reconcile(entry.word, entry.aiMorphemes, settings.dictionaryPath)
+      : await rootIndexer.match(entry.word, settings.dictionaryPath)
     database.setRootMatches(entry.id, matches)
   }
   notifyChanged()
@@ -204,6 +210,12 @@ function setupIpc(): void {
     notifyChanged()
     void processor.processNext()
   })
+  ipcMain.handle('queue:reanalyse-all', () => {
+    const queuedCount = database.reanalyseAllWords()
+    notifyChanged()
+    void processor.processNext()
+    return queuedCount
+  })
   ipcMain.handle('roots:status', () => rootIndexer.currentStatus(database.getSettings().dictionaryPath))
   ipcMain.handle('roots:rebuild', async () => {
     const status = await rootIndexer.rebuild(database.getSettings().dictionaryPath)
@@ -256,7 +268,12 @@ app.whenReady().then(async () => {
   database = new AppDatabase(app.getPath('userData'), secretCodec)
   rootIndexer = new RootIndexer(database.directory)
   providers = new AiProviderRegistry([new DeepSeekProvider()])
-  processor = new QueueProcessor(database, providers, notifyChanged)
+  processor = new QueueProcessor(
+    database,
+    providers,
+    notifyChanged,
+    (word, morphemes) => rootIndexer.reconcile(word, morphemes, database.getSettings().dictionaryPath)
+  )
   setupIpc()
   createWindow()
   processor.start()

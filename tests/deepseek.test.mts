@@ -43,10 +43,16 @@ test('DeepSeek enrichment requests JSON output and parses the vocabulary fields'
         finish_reason: 'stop',
         message: {
           content: JSON.stringify({
-            ipaUk: 'vəˈkæbjələri',
-            senses: [{ partOfSpeech: 'noun', definitionZh: '词汇' }],
+            ipaUk: 'kənˈvɜːʃən',
+            senses: [{ partOfSpeech: 'noun', definitionZh: '转换；转化' }],
             suggestedCategory: '学术写作',
-            suggestedTags: ['考试']
+            suggestedTags: ['考试'],
+            morphemes: [
+              { kind: 'prefix', form: 'con-', canonicalForm: 'con-', meaning: '共同、一起' },
+              { kind: 'root', form: 'vers', canonicalForm: 'vert / vers', meaning: '转、转变' },
+              { kind: 'suffix', form: '-ion', canonicalForm: '-ion', meaning: '动作、过程或结果' }
+            ],
+            formationSummary: 'con-（共同）+ vers（转）+ -ion（名词后缀）→ 转换。'
           })
         }
       }]
@@ -57,7 +63,7 @@ test('DeepSeek enrichment requests JSON output and parses the vocabulary fields'
     baseUrl: 'https://api.deepseek.com',
     apiKey: 'sk-test',
     model: 'deepseek-v4-flash',
-    word: 'vocabulary',
+    word: 'conversion',
     existingCategories: ['学术写作']
   }, fetcher)
 
@@ -66,10 +72,16 @@ test('DeepSeek enrichment requests JSON output and parses the vocabulary fields'
   assert.deepEqual(requestBody.response_format, { type: 'json_object' })
   assert.equal(requestBody.stream, false)
   assert.deepEqual(enrichment, {
-    ipaUk: 'vəˈkæbjələri',
-    senses: [{ partOfSpeech: 'noun', definitionZh: '词汇' }],
+    ipaUk: 'kənˈvɜːʃən',
+    senses: [{ partOfSpeech: 'noun', definitionZh: '转换；转化' }],
     suggestedCategory: '学术写作',
-    tagNames: ['考试']
+    tagNames: ['考试'],
+    morphemes: [
+      { kind: 'prefix', form: 'con-', canonicalForm: 'con-', meaning: '共同、一起' },
+      { kind: 'root', form: 'vers', canonicalForm: 'vert / vers', meaning: '转、转变' },
+      { kind: 'suffix', form: '-ion', canonicalForm: '-ion', meaning: '动作、过程或结果' }
+    ],
+    formationSummary: 'con-（共同）+ vers（转）+ -ion（名词后缀）→ 转换。'
   })
 })
 

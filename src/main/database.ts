@@ -4,6 +4,8 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
   AppSettings,
+  AiEnrichment,
+  AiMorpheme,
   Category,
   EnrichmentStatus,
   QueueStatus,
@@ -17,6 +19,7 @@ import type {
 } from '../shared/types'
 
 const UNCATEGORIZED_ID = 'uncategorized'
+const MORPHOLOGY_VERSION = 1
 const DEFAULT_SETTINGS: AppSettings = {
   aiProvider: 'deepseek',
   deepseekApiUrl: 'https://api.deepseek.com',
@@ -43,6 +46,8 @@ type WordRow = {
   category_id: string
   category_name: string
   category_color: string
+  ai_morphemes_json: string
+  formation_summary: string
   enrichment_status: EnrichmentStatus
   ai_error: string | null
   is_deleted: number
@@ -93,6 +98,9 @@ export class AppDatabase {
         ai_error TEXT,
         ai_reviewed INTEGER NOT NULL DEFAULT 0,
         suggested_category TEXT,
+        ai_morphemes_json TEXT NOT NULL DEFAULT '[]',
+        formation_summary TEXT NOT NULL DEFAULT '',
+        morphology_version INTEGER NOT NULL DEFAULT 0,
         is_deleted INTEGER NOT NULL DEFAULT 0,
         deleted_at TEXT,
         created_at TEXT NOT NULL,
@@ -114,16 +122,21 @@ export class AppDatabase {
         id TEXT PRIMARY KEY,
         word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
         root TEXT NOT NULL,
+        surface_form TEXT NOT NULL DEFAULT '',
+        morpheme_kind TEXT NOT NULL DEFAULT 'root',
         meaning TEXT NOT NULL,
         formation_note TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT 'dictionary',
         source_anchor TEXT NOT NULL,
         source_label TEXT NOT NULL,
-        matched_via TEXT NOT NULL
+        matched_via TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
         word_id TEXT NOT NULL UNIQUE REFERENCES words(id) ON DELETE CASCADE,
         status TEXT NOT NULL DEFAULT 'pending',
+        priority INTEGER NOT NULL DEFAULT 100,
         error TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -139,6 +152,34 @@ export class AppDatabase {
     const rootColumns = this.db.pragma('table_info(root_matches)') as { name: string }[]
     if (!rootColumns.some((column) => column.name === 'formation_note')) {
       this.db.exec(`ALTER TABLE root_matches ADD COLUMN formation_note TEXT NOT NULL DEFAULT ''`)
+    }
+    if (!rootColumns.some((column) => column.name === 'surface_form')) {
+      this.db.exec(`ALTER TABLE root_matches ADD COLUMN surface_form TEXT NOT NULL DEFAULT ''`)
+    }
+    if (!rootColumns.some((column) => column.name === 'morpheme_kind')) {
+      this.db.exec(`ALTER TABLE root_matches ADD COLUMN morpheme_kind TEXT NOT NULL DEFAULT 'root'`)
+    }
+    if (!rootColumns.some((column) => column.name === 'source')) {
+      this.db.exec(`ALTER TABLE root_matches ADD COLUMN source TEXT NOT NULL DEFAULT 'dictionary'`)
+    }
+    if (!rootColumns.some((column) => column.name === 'sort_order')) {
+      this.db.exec(`ALTER TABLE root_matches ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`)
+    }
+    this.db.prepare(`UPDATE root_matches SET surface_form = root WHERE trim(surface_form) = ''`).run()
+    const wordColumns = this.db.pragma('table_info(words)') as { name: string }[]
+    const needsMorphologyBackfill = !wordColumns.some((column) => column.name === 'morphology_version')
+    if (!wordColumns.some((column) => column.name === 'ai_morphemes_json')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN ai_morphemes_json TEXT NOT NULL DEFAULT '[]'`)
+    }
+    if (!wordColumns.some((column) => column.name === 'formation_summary')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN formation_summary TEXT NOT NULL DEFAULT ''`)
+    }
+    if (needsMorphologyBackfill) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN morphology_version INTEGER NOT NULL DEFAULT 0`)
+    }
+    const taskColumns = this.db.pragma('table_info(tasks)') as { name: string }[]
+    if (!taskColumns.some((column) => column.name === 'priority')) {
+      this.db.exec(`ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 100`)
     }
 
     this.db
@@ -167,6 +208,15 @@ export class AppDatabase {
         applyCategory.run(category.id, suggestion.id)
       }
       this.db.prepare(`UPDATE words SET enrichment_status = 'ready', ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE enrichment_status = 'needs_review'`).run(now())
+      if (needsMorphologyBackfill) {
+        const missingTasks = this.db
+          .prepare(`SELECT w.id FROM words w LEFT JOIN tasks t ON t.word_id = w.id WHERE w.is_deleted = 0 AND t.id IS NULL`)
+          .all() as { id: string }[]
+        const insertTask = this.db.prepare(`INSERT INTO tasks (id, word_id, status, priority, created_at, updated_at) VALUES (?, ?, 'pending', 0, ?, ?)`)
+        for (const word of missingTasks) insertTask.run(randomUUID(), word.id, now(), now())
+        this.db.prepare(`UPDATE tasks SET status = 'pending', priority = 0, error = NULL, updated_at = ? WHERE word_id IN (SELECT id FROM words WHERE is_deleted = 0)`).run(now())
+        this.db.prepare(`UPDATE words SET enrichment_status = 'pending', ai_error = NULL, morphology_version = 0, updated_at = ? WHERE is_deleted = 0`).run(now())
+      }
     })()
   }
 
@@ -187,10 +237,10 @@ export class AppDatabase {
     }
     if (filters.query?.trim()) {
       clauses.push(`(
-        lower(w.word) LIKE @query OR lower(w.ipa_uk) LIKE @query OR lower(c.name) LIKE @query OR
+        lower(w.word) LIKE @query OR lower(w.ipa_uk) LIKE @query OR lower(w.formation_summary) LIKE @query OR lower(c.name) LIKE @query OR
         EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND (lower(s.part_of_speech) LIKE @query OR lower(s.definition_zh) LIKE @query)) OR
         EXISTS (SELECT 1 FROM word_tags wt JOIN tags t ON t.id = wt.tag_id WHERE wt.word_id = w.id AND lower(t.name) LIKE @query) OR
-        EXISTS (SELECT 1 FROM root_matches rm WHERE rm.word_id = w.id AND (lower(rm.root) LIKE @query OR lower(rm.meaning) LIKE @query))
+        EXISTS (SELECT 1 FROM root_matches rm WHERE rm.word_id = w.id AND (lower(rm.root) LIKE @query OR lower(rm.surface_form) LIKE @query OR lower(rm.meaning) LIKE @query OR lower(rm.formation_note) LIKE @query))
       )`)
     }
 
@@ -241,7 +291,7 @@ export class AppDatabase {
           VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
         .run(id, word, normalizedWord, UNCATEGORIZED_ID, createdAt, createdAt)
       this.db
-        .prepare(`INSERT INTO tasks (id, word_id, status, created_at, updated_at) VALUES (?, ?, 'pending', ?, ?)`)
+        .prepare(`INSERT INTO tasks (id, word_id, status, priority, created_at, updated_at) VALUES (?, ?, 'pending', 100, ?, ?)`)
         .run(randomUUID(), id, createdAt, createdAt)
     })
     insert()
@@ -357,7 +407,7 @@ export class AppDatabase {
 
   nextPendingTask(): { taskId: string; wordId: string } | null {
     const task = this.db
-      .prepare(`SELECT id AS taskId, word_id AS wordId FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1`)
+      .prepare(`SELECT id AS taskId, word_id AS wordId FROM tasks WHERE status = 'pending' ORDER BY priority DESC, created_at ASC LIMIT 1`)
       .get() as { taskId: string; wordId: string } | undefined
     return task ?? null
   }
@@ -391,13 +441,31 @@ export class AppDatabase {
     const task = this.db.prepare('SELECT id FROM tasks WHERE word_id = ?').get(wordId) as { id: string } | undefined
     if (task) {
       this.setTaskStatus(task.id, 'pending')
+      this.db.prepare(`UPDATE tasks SET priority = 100 WHERE id = ?`).run(task.id)
     } else {
-      this.db.prepare('INSERT INTO tasks (id, word_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(randomUUID(), wordId, 'pending', now(), now())
+      this.db.prepare('INSERT INTO tasks (id, word_id, status, priority, created_at, updated_at) VALUES (?, ?, ?, 100, ?, ?)').run(randomUUID(), wordId, 'pending', now(), now())
     }
     this.db.prepare(`UPDATE words SET enrichment_status = 'pending', ai_error = NULL, updated_at = ? WHERE id = ?`).run(now(), wordId)
   }
 
-  applyEnrichment(wordId: string, result: { ipaUk: string; senses: WordSense[]; suggestedCategory: string | null; tagNames: string[] }): void {
+  reanalyseAllWords(): number {
+    const activeWords = this.db.prepare(`SELECT id FROM words WHERE is_deleted = 0`).all() as { id: string }[]
+    const timestamp = now()
+    const transaction = this.db.transaction(() => {
+      const findTask = this.db.prepare(`SELECT id FROM tasks WHERE word_id = ?`)
+      const insertTask = this.db.prepare(`INSERT INTO tasks (id, word_id, status, priority, created_at, updated_at) VALUES (?, ?, 'pending', 0, ?, ?)`)
+      const updateTask = this.db.prepare(`UPDATE tasks SET status = 'pending', priority = 0, error = NULL, updated_at = ? WHERE word_id = ?`)
+      for (const word of activeWords) {
+        if (findTask.get(word.id)) updateTask.run(timestamp, word.id)
+        else insertTask.run(randomUUID(), word.id, timestamp, timestamp)
+      }
+      this.db.prepare(`UPDATE words SET enrichment_status = 'pending', ai_error = NULL, morphology_version = 0, updated_at = ? WHERE is_deleted = 0`).run(timestamp)
+    })
+    transaction()
+    return activeWords.length
+  }
+
+  applyEnrichment(wordId: string, result: AiEnrichment): void {
     const transaction = this.db.transaction(() => {
       const current = this.getWord(wordId)
       let categoryId = current?.categoryId && current.categoryId !== UNCATEGORIZED_ID ? current.categoryId : UNCATEGORIZED_ID
@@ -411,8 +479,16 @@ export class AppDatabase {
         ).id
       }
       this.db
-        .prepare(`UPDATE words SET ipa_uk = ?, category_id = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
-        .run(result.ipaUk, categoryId, now(), wordId)
+        .prepare(`UPDATE words SET ipa_uk = ?, category_id = ?, ai_morphemes_json = ?, formation_summary = ?, morphology_version = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
+        .run(
+          result.ipaUk,
+          categoryId,
+          JSON.stringify(result.morphemes ?? []),
+          result.formationSummary?.trim() ?? '',
+          MORPHOLOGY_VERSION,
+          now(),
+          wordId
+        )
       this.replaceSenses(wordId, result.senses)
       this.replaceTags(wordId, result.tagNames)
     })
@@ -422,9 +498,22 @@ export class AppDatabase {
   setRootMatches(wordId: string, matches: RootMatch[]): void {
     const transaction = this.db.transaction(() => {
       this.db.prepare('DELETE FROM root_matches WHERE word_id = ?').run(wordId)
-      const insert = this.db.prepare(`INSERT INTO root_matches (id, word_id, root, meaning, formation_note, source_anchor, source_label, matched_via) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      const insert = this.db.prepare(`INSERT INTO root_matches (id, word_id, root, surface_form, morpheme_kind, meaning, formation_note, source, source_anchor, source_label, matched_via, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       matches.forEach((match) =>
-        insert.run(randomUUID(), wordId, match.root, match.meaning, match.formationNote, match.sourceAnchor, match.sourceLabel, match.matchedVia)
+        insert.run(
+          randomUUID(),
+          wordId,
+          match.root,
+          match.surfaceForm,
+          match.kind,
+          match.meaning,
+          match.formationNote,
+          match.source,
+          match.sourceAnchor,
+          match.sourceLabel,
+          match.matchedVia,
+          match.sortOrder
+        )
       )
     })
     transaction()
@@ -480,8 +569,15 @@ export class AppDatabase {
       .prepare(`SELECT t.id, t.name FROM tags t JOIN word_tags wt ON wt.tag_id = t.id WHERE wt.word_id = ? ORDER BY t.name COLLATE NOCASE`)
       .all(row.id) as Tag[]
     const rootMatches = this.db
-      .prepare(`SELECT id, root, meaning, formation_note AS formationNote, source_anchor AS sourceAnchor, source_label AS sourceLabel, matched_via AS matchedVia FROM root_matches WHERE word_id = ?`)
+      .prepare(`SELECT id, root, surface_form AS surfaceForm, morpheme_kind AS kind, meaning, formation_note AS formationNote, source, source_anchor AS sourceAnchor, source_label AS sourceLabel, matched_via AS matchedVia, sort_order AS sortOrder FROM root_matches WHERE word_id = ? ORDER BY sort_order, rowid`)
       .all(row.id) as RootMatch[]
+    let aiMorphemes: AiMorpheme[] = []
+    try {
+      const parsed = JSON.parse(row.ai_morphemes_json) as unknown
+      if (Array.isArray(parsed)) aiMorphemes = parsed as AiMorpheme[]
+    } catch {
+      // Corrupt optional analysis data must not block access to the wordbook.
+    }
     return {
       id: row.id,
       word: row.word,
@@ -492,6 +588,8 @@ export class AppDatabase {
       categoryName: row.category_name,
       categoryColor: row.category_color,
       tags,
+      aiMorphemes,
+      formationSummary: row.formation_summary,
       rootMatches,
       status: row.enrichment_status,
       aiError: row.ai_error,

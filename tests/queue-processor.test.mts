@@ -21,6 +21,8 @@ test('an in-flight AI response cannot overwrite a manual save', async (context) 
     senses: { partOfSpeech: string; definitionZh: string }[]
     suggestedCategory: string | null
     tagNames: string[]
+    morphemes: { kind: 'prefix' | 'root' | 'suffix'; form: string; canonicalForm: string; meaning: string }[]
+    formationSummary: string
   }>()
   const provider = {
     id: 'deepseek',
@@ -47,7 +49,9 @@ test('an in-flight AI response cannot overwrite a manual save', async (context) 
     ipaUk: 'ai-ipa',
     senses: [{ partOfSpeech: 'noun', definitionZh: 'AI 释义' }],
     suggestedCategory: null,
-    tagNames: ['AI']
+    tagNames: ['AI'],
+    morphemes: [],
+    formationSummary: ''
   })
   await processing
 
@@ -148,4 +152,52 @@ test('retryable DeepSeek failures return the word to the pending queue', async (
 
   assert.equal(database.getWord(created.entry.id)?.status, 'pending')
   assert.deepEqual(processor.getStatus(), { pending: 1, processing: 0, failed: 0, paused: false })
+})
+
+test('AI queue stores the reconciled morpheme chain with the enrichment', async (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-morpheme-queue-'))
+  const database = new AppDatabase(directory)
+  context.after(() => {
+    database.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const created = database.createWord('Conversion')
+  const provider = {
+    id: 'deepseek',
+    check: async () => ({ available: true, models: ['deepseek-v4-flash'], message: 'ok' }),
+    enrich: async () => ({
+      ipaUk: 'kənˈvɜːʃən',
+      senses: [{ partOfSpeech: 'noun', definitionZh: '转换；转化' }],
+      suggestedCategory: null,
+      tagNames: ['变化'],
+      morphemes: [
+        { kind: 'root' as const, form: 'vers', canonicalForm: 'vert / vers', meaning: '转、转变' }
+      ],
+      formationSummary: 'vers（转）+ -ion（名词后缀）→ 转换。'
+    })
+  }
+  const processor = new QueueProcessor(
+    database,
+    { get: () => provider },
+    () => undefined,
+    async () => [{
+      root: 'vert / vers',
+      surfaceForm: 'vers',
+      kind: 'root',
+      meaning: '转、转变',
+      formationNote: '',
+      source: 'dictionary',
+      sourceAnchor: 'root-vers',
+      sourceLabel: '词根 vert / vers',
+      matchedVia: 'morpheme',
+      sortOrder: 0
+    }]
+  )
+
+  await processor.processNext()
+
+  const enriched = database.getWord(created.entry.id)
+  assert.equal(enriched?.formationSummary, 'vers（转）+ -ion（名词后缀）→ 转换。')
+  assert.equal(enriched?.rootMatches[0]?.root, 'vert / vers')
+  assert.equal(enriched?.rootMatches[0]?.source, 'dictionary')
 })

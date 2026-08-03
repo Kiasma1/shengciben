@@ -52,7 +52,9 @@ test('AI enrichment is trusted immediately and creates its suggested category', 
     ipaUk: 'vəˈkæbjələri',
     senses: [{ partOfSpeech: 'noun', definitionZh: '词汇' }],
     suggestedCategory: '学术写作',
-    tagNames: ['考试']
+    tagNames: ['考试'],
+    morphemes: [],
+    formationSummary: ''
   })
 
   const enriched = fixture.database.getWord(created.entry.id)
@@ -60,6 +62,175 @@ test('AI enrichment is trusted immediately and creates its suggested category', 
   assert.equal(enriched?.categoryName, '学术写作')
   assert.deepEqual(enriched?.senses.map((sense) => sense.definitionZh), ['词汇'])
   assert.deepEqual(enriched?.tags.map((tag) => tag.name), ['考试'])
+})
+
+test('AI enrichment persists reusable morphemes and the formation summary', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const created = fixture.database.createWord('Conversion')
+  const morphemes = [
+    { kind: 'prefix', form: 'con-', canonicalForm: 'con-', meaning: '共同、一起' },
+    { kind: 'root', form: 'vers', canonicalForm: 'vert / vers', meaning: '转、转变' },
+    { kind: 'suffix', form: '-ion', canonicalForm: '-ion', meaning: '动作、过程或结果' }
+  ]
+
+  fixture.database.applyEnrichment(created.entry.id, {
+    ipaUk: 'kənˈvɜːʃən',
+    senses: [{ partOfSpeech: 'noun', definitionZh: '转换；转化' }],
+    suggestedCategory: '通用词汇',
+    tagNames: ['变化'],
+    morphemes,
+    formationSummary: 'con-（共同）+ vers（转）+ -ion（名词后缀）→ 转换。'
+  })
+
+  const enriched = fixture.database.getWord(created.entry.id)
+  assert.equal(enriched?.formationSummary, 'con-（共同）+ vers（转）+ -ion（名词后缀）→ 转换。')
+  assert.deepEqual(enriched?.aiMorphemes, morphemes)
+})
+
+test('resolved morphemes preserve their kind, surface form, source, and order', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const created = fixture.database.createWord('Conversion')
+
+  fixture.database.setRootMatches(created.entry.id, [{
+    root: 'vert / vers',
+    surfaceForm: 'vers',
+    kind: 'root',
+    meaning: '转、转变',
+    formationNote: '',
+    source: 'dictionary',
+    sourceAnchor: 'root-vers',
+    sourceLabel: '词根 vert / vers',
+    matchedVia: 'morpheme',
+    sortOrder: 1
+  }])
+
+  assert.deepEqual(fixture.database.getWord(created.entry.id)?.rootMatches, [{
+    id: fixture.database.getWord(created.entry.id)?.rootMatches[0]?.id,
+    root: 'vert / vers',
+    surfaceForm: 'vers',
+    kind: 'root',
+    meaning: '转、转变',
+    formationNote: '',
+    source: 'dictionary',
+    sourceAnchor: 'root-vers',
+    sourceLabel: '词根 vert / vers',
+    matchedVia: 'morpheme',
+    sortOrder: 1
+  }])
+})
+
+test('legacy dictionary roots gain a usable surface form when reopened', (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-morpheme-migration-'))
+  const first = new AppDatabase(directory)
+  const created = first.createWord('Vocabulary')
+  first.setRootMatches(created.entry.id, [{
+    root: 'voc',
+    surfaceForm: 'voc',
+    kind: 'root',
+    meaning: '声音',
+    formationNote: '',
+    source: 'dictionary',
+    sourceAnchor: 'root-voc',
+    sourceLabel: '词根 voc',
+    matchedVia: 'exact',
+    sortOrder: 0
+  }])
+  first.close()
+
+  const raw = new Database(path.join(directory, 'shengciben.sqlite'))
+  raw.prepare(`UPDATE root_matches SET surface_form = ''`).run()
+  raw.close()
+
+  const reopened = new AppDatabase(directory)
+  context.after(() => {
+    reopened.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  assert.equal(reopened.getWord(created.entry.id)?.rootMatches[0]?.surfaceForm, 'voc')
+})
+
+test('word search includes the AI formation summary', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const created = fixture.database.createWord('Conversion')
+  fixture.database.applyEnrichment(created.entry.id, {
+    ipaUk: 'kənˈvɜːʃən',
+    senses: [{ partOfSpeech: 'noun', definitionZh: '转换；转化' }],
+    suggestedCategory: null,
+    tagNames: [],
+    morphemes: [
+      { kind: 'suffix', form: '-ion', canonicalForm: '-ion', meaning: '动作、过程或结果' }
+    ],
+    formationSummary: 'vers（转）+ -ion（名词后缀）→ 转换。'
+  })
+
+  assert.deepEqual(fixture.database.listWords({ query: '名词后缀' }).map((entry) => entry.word), ['Conversion'])
+})
+
+test('legacy completed words are queued once for background morphology enrichment', (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-morphology-backfill-'))
+  const first = new AppDatabase(directory)
+  const created = first.createWord('Legacy')
+  const task = first.nextPendingTask()
+  assert.ok(task)
+  first.applyEnrichment(created.entry.id, {
+    ipaUk: 'ˈleɡəsi',
+    senses: [{ partOfSpeech: 'noun', definitionZh: '遗留事物' }],
+    suggestedCategory: null,
+    tagNames: [],
+    morphemes: [],
+    formationSummary: ''
+  })
+  first.setTaskStatus(task.taskId, 'completed')
+  first.close()
+
+  const raw = new Database(path.join(directory, 'shengciben.sqlite'))
+  const wordColumns = raw.pragma('table_info(words)') as { name: string }[]
+  const taskColumns = raw.pragma('table_info(tasks)') as { name: string }[]
+  if (wordColumns.some((column) => column.name === 'morphology_version')) raw.exec('ALTER TABLE words DROP COLUMN morphology_version')
+  if (taskColumns.some((column) => column.name === 'priority')) raw.exec('ALTER TABLE tasks DROP COLUMN priority')
+  raw.close()
+
+  const reopened = new AppDatabase(directory)
+  context.after(() => {
+    reopened.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  assert.equal(reopened.nextPendingTask()?.wordId, created.entry.id)
+  assert.equal(reopened.getWord(created.entry.id)?.status, 'pending')
+})
+
+test('reanalyse all queues active words without restoring trash', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const active = fixture.database.createWord('Active')
+  const second = fixture.database.createWord('Second')
+  const trashed = fixture.database.createWord('Discarded')
+  fixture.database.trashWord(trashed.entry.id)
+  for (const wordId of [active.entry.id, second.entry.id]) {
+    fixture.database.applyEnrichment(wordId, {
+      ipaUk: 'test',
+      senses: [{ partOfSpeech: 'noun', definitionZh: '测试' }],
+      suggestedCategory: null,
+      tagNames: [],
+      morphemes: [],
+      formationSummary: ''
+    })
+  }
+  while (true) {
+    const task = fixture.database.nextPendingTask()
+    if (!task) break
+    fixture.database.setTaskStatus(task.taskId, 'completed')
+  }
+
+  assert.equal(fixture.database.reanalyseAllWords(), 2)
+  assert.equal(fixture.database.getQueueStatus(false).pending, 2)
+  assert.equal(fixture.database.getWord(active.entry.id)?.status, 'pending')
+  assert.equal(fixture.database.getWord(trashed.entry.id)?.isDeleted, true)
 })
 
 test('legacy review records become ready when the database reopens', (context) => {

@@ -36,7 +36,8 @@ contextBridge.exposeInMainWorld('api', {
   queue: {
     status: () => ipcRenderer.invoke('queue:status'),
     setPaused: (paused: boolean) => ipcRenderer.invoke('queue:set-paused', paused),
-    retry: (wordId: string) => ipcRenderer.invoke('queue:retry', wordId)
+    retry: (wordId: string) => ipcRenderer.invoke('queue:retry', wordId),
+    reanalyseAll: () => ipcRenderer.invoke('queue:reanalyse-all')
   },
   roots: {
     status: () => ipcRenderer.invoke('roots:status'),

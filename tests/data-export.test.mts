@@ -14,13 +14,19 @@ test('CSV export preserves Chinese text and escapes quotes', () => {
       categoryName: '写作',
       categoryColor: '#000000',
       tags: [{ id: 'tag-1', name: '考试' }],
+      aiMorphemes: [],
+      formationSummary: '',
       rootMatches: [{
         root: 'quot',
+        surfaceForm: 'quot',
+        kind: 'root',
         meaning: 'how many',
         formationNote: '来自拉丁语',
+        source: 'dictionary',
         sourceAnchor: 'quot',
         sourceLabel: '词根 quot',
-        matchedVia: 'exact'
+        matchedVia: 'exact',
+        sortOrder: 0
       }],
       status: 'ready',
       aiError: null,

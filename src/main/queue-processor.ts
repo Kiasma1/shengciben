@@ -1,19 +1,41 @@
 import type { AppDatabase } from './database'
 import type { AiProviderRegistry } from './ai-provider'
-import type { QueueStatus } from '../shared/types'
+import type { AiMorpheme, QueueStatus, RootMatch } from '../shared/types'
+
+type MorphemeResolver = (word: string, morphemes: AiMorpheme[]) => Promise<RootMatch[]>
+
+const aiOnlyMorphemes: MorphemeResolver = async (_word, morphemes) => morphemes.map((morpheme, sortOrder) => ({
+  root: morpheme.canonicalForm,
+  surfaceForm: morpheme.form,
+  kind: morpheme.kind,
+  meaning: morpheme.meaning,
+  formationNote: '',
+  source: 'ai',
+  sourceAnchor: '',
+  sourceLabel: 'AI 解析',
+  matchedVia: 'ai',
+  sortOrder
+}))
 
 export class QueueProcessor {
   private readonly database: AppDatabase
   private readonly providers: AiProviderRegistry
   private readonly onChanged: () => void
+  private readonly resolveMorphemes: MorphemeResolver
   private running = false
   private paused = false
   private timer: NodeJS.Timeout | null = null
 
-  constructor(database: AppDatabase, providers: AiProviderRegistry, onChanged: () => void) {
+  constructor(
+    database: AppDatabase,
+    providers: AiProviderRegistry,
+    onChanged: () => void,
+    resolveMorphemes: MorphemeResolver = aiOnlyMorphemes
+  ) {
     this.database = database
     this.providers = providers
     this.onChanged = onChanged
+    this.resolveMorphemes = resolveMorphemes
   }
 
   start(): void {
@@ -65,8 +87,10 @@ export class QueueProcessor {
         word: entry.word,
         existingCategories: this.database.listCategories().map((category) => category.name)
       }, connection)
+      const rootMatches = await this.resolveMorphemes(entry.word, enrichment.morphemes ?? [])
       if (!this.database.isTaskProcessing(task.taskId)) return
       this.database.applyEnrichment(task.wordId, enrichment)
+      this.database.setRootMatches(task.wordId, rootMatches)
       this.database.setTaskStatus(task.taskId, 'completed')
     } catch (error) {
       if (!this.database.isTaskProcessing(task.taskId)) return

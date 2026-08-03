@@ -48,6 +48,7 @@ declare global {
         status: () => Promise<QueueStatus>
         setPaused: (paused: boolean) => Promise<QueueStatus>
         retry: (wordId: string) => Promise<void>
+        reanalyseAll: () => Promise<number>
       }
       roots: {
         status: () => Promise<RootIndexStatus>

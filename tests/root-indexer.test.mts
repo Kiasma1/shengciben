@@ -55,6 +55,60 @@ test('root index recognizes emphasized examples and their referenced prefixes', 
   assert.deepEqual(await indexer.match('talk', dictionaryPath), [])
 })
 
+test('AI morphemes resolve to dictionary families and keep unmatched affixes as AI analysis', async (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-roots-'))
+  context.after(() => rmSync(directory, { recursive: true, force: true }))
+  const dictionaryPath = path.join(directory, 'roots.html')
+  writeFileSync(dictionaryPath, [
+    '<h2 id="root-con"><code>con-</code></h2>',
+    '<ul><li><strong>核心词根义</strong>：共同、一起。</li></ul>',
+    '<h2 id="root-vers"><code>vert / vers</code></h2>',
+    '<ul><li><strong>核心词根义</strong>：转、转变。</li></ul>'
+  ].join(''))
+  const indexer = new RootIndexer(directory)
+
+  const matches = await indexer.reconcile('conversion', [
+    { kind: 'prefix', form: 'con-', canonicalForm: 'con-', meaning: '共同、一起' },
+    { kind: 'root', form: 'vers', canonicalForm: 'vert / vers', meaning: '转、转变' },
+    { kind: 'suffix', form: '-ion', canonicalForm: '-ion', meaning: '动作、过程或结果' }
+  ], dictionaryPath)
+
+  assert.deepEqual(matches.map((match) => ({
+    root: match.root,
+    surfaceForm: match.surfaceForm,
+    kind: match.kind,
+    meaning: match.meaning,
+    source: match.source,
+    sourceAnchor: match.sourceAnchor,
+    matchedVia: match.matchedVia,
+    sortOrder: match.sortOrder
+  })), [
+    { root: 'con-', surfaceForm: 'con-', kind: 'prefix', meaning: '共同、一起。', source: 'dictionary', sourceAnchor: 'root-con', matchedVia: 'morpheme', sortOrder: 0 },
+    { root: 'vert / vers', surfaceForm: 'vers', kind: 'root', meaning: '转、转变。', source: 'dictionary', sourceAnchor: 'root-vers', matchedVia: 'morpheme', sortOrder: 1 },
+    { root: '-ion', surfaceForm: '-ion', kind: 'suffix', meaning: '动作、过程或结果', source: 'ai', sourceAnchor: '', matchedVia: 'ai', sortOrder: 2 }
+  ])
+})
+
+test('AI morphemes collapse duplicate forms from the same dictionary family', async (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-roots-'))
+  context.after(() => rmSync(directory, { recursive: true, force: true }))
+  const dictionaryPath = path.join(directory, 'roots.html')
+  writeFileSync(dictionaryPath, [
+    '<h2 id="root-con"><code>com- / con- / co-</code></h2>',
+    '<ul><li><strong>核心词根义</strong>：共同、一起。</li></ul>'
+  ].join(''))
+  const indexer = new RootIndexer(directory)
+
+  const matches = await indexer.reconcile('connect', [
+    { kind: 'prefix', form: 'con-', canonicalForm: 'con-', meaning: '共同、一起' },
+    { kind: 'prefix', form: 'con', canonicalForm: 'com- / con- / co-', meaning: '共同、一起' }
+  ], dictionaryPath)
+
+  assert.equal(matches.length, 1)
+  assert.equal(matches[0]?.root, 'com- / con- / co-')
+  assert.equal(matches[0]?.source, 'dictionary')
+})
+
 test('root index covers dictionary section variants without indexing gloss components', async (context) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-roots-'))
   context.after(() => rmSync(directory, { recursive: true, force: true }))

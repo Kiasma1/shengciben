@@ -1,5 +1,14 @@
 export type EnrichmentStatus = 'pending' | 'processing' | 'ready' | 'failed'
-export type RootMatchMode = 'exact' | 'lemma'
+export type RootMatchMode = 'exact' | 'lemma' | 'morpheme' | 'ai'
+export type MorphemeKind = 'prefix' | 'root' | 'suffix'
+export type MorphemeSource = 'dictionary' | 'ai'
+
+export interface AiMorpheme {
+  kind: MorphemeKind
+  form: string
+  canonicalForm: string
+  meaning: string
+}
 
 export interface Category {
   id: string
@@ -22,11 +31,15 @@ export interface WordSense {
 export interface RootMatch {
   id?: string
   root: string
+  surfaceForm: string
+  kind: MorphemeKind
   meaning: string
   formationNote: string
+  source: MorphemeSource
   sourceAnchor: string
   sourceLabel: string
   matchedVia: RootMatchMode
+  sortOrder: number
 }
 
 export interface WordEntry {
@@ -39,6 +52,8 @@ export interface WordEntry {
   categoryName: string
   categoryColor: string
   tags: Tag[]
+  aiMorphemes: AiMorpheme[]
+  formationSummary: string
   rootMatches: RootMatch[]
   status: EnrichmentStatus
   aiError: string | null
@@ -93,6 +108,8 @@ export interface AiEnrichment {
   senses: WordSense[]
   suggestedCategory: string | null
   tagNames: string[]
+  morphemes: AiMorpheme[]
+  formationSummary: string
 }
 
 export interface RootIndexStatus {

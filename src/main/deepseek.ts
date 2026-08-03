@@ -27,7 +27,14 @@ const enrichmentSchema = z.object({
   ipaUk: z.string().min(1).max(80),
   senses: z.array(z.object({ partOfSpeech: z.string().min(1).max(40), definitionZh: z.string().min(1).max(160) })).min(1).max(6),
   suggestedCategory: z.string().max(60).nullable(),
-  suggestedTags: z.array(z.string().min(1).max(30)).max(6)
+  suggestedTags: z.array(z.string().min(1).max(30)).max(6),
+  morphemes: z.array(z.object({
+    kind: z.enum(['prefix', 'root', 'suffix']),
+    form: z.string().min(1).max(40),
+    canonicalForm: z.string().min(1).max(80),
+    meaning: z.string().min(1).max(160)
+  })).max(8),
+  formationSummary: z.string().max(400)
 })
 
 export async function checkDeepSeek(
@@ -69,13 +76,13 @@ export async function enrichWithDeepSeek(
     body: JSON.stringify({
       model: input.model,
       stream: false,
-      max_tokens: 800,
+      max_tokens: 1200,
       response_format: { type: 'json_object' },
       messages: [
         {
           role: 'system',
           content:
-            '你是英语词汇助理。只返回 JSON，不要 markdown。JSON 格式示例：{"ipaUk":"...","senses":[{"partOfSpeech":"noun","definitionZh":"..."}],"suggestedCategory":"...","suggestedTags":["..."]}。IPA 必须使用英式发音；词性用简洁英文；中文释义简洁准确。分类优先从 existingCategories 选择；没有合适项可给出一个短的新分类名。不要给出词根、例句或额外解释。'
+            '你是严谨的英语词汇与词源助理。只返回 JSON，不要 markdown。JSON 格式示例：{"ipaUk":"kənˈvɜːʃən","senses":[{"partOfSpeech":"noun","definitionZh":"转换；转化"}],"suggestedCategory":"通用词汇","suggestedTags":["变化"],"morphemes":[{"kind":"prefix","form":"con-","canonicalForm":"con-","meaning":"共同、一起"},{"kind":"root","form":"vers","canonicalForm":"vert / vers","meaning":"转、转变"},{"kind":"suffix","form":"-ion","canonicalForm":"-ion","meaning":"动作、过程或结果"}],"formationSummary":"con-（共同）+ vers（转）+ -ion（名词后缀）→ 转换。"}。IPA 必须使用英式发音；词性用简洁英文；中文释义简洁准确。分类优先从 existingCategories 选择。morphemes 按单词中的顺序返回 prefix、root、suffix，只给出有语言学依据的构词成分；不要把复数、过去式等屈折变化当作构词成分，不要因字母相似强行拆分。无法可靠拆分时必须返回空 morphemes，formationSummary 可为空。canonicalForm 使用规范词根或词缀形式，form 使用该单词中的表面形式。'
         },
         {
           role: 'user',
@@ -94,7 +101,14 @@ export async function enrichWithDeepSeek(
     ipaUk: parsed.data.ipaUk,
     senses: parsed.data.senses,
     suggestedCategory: parsed.data.suggestedCategory?.trim() || null,
-    tagNames: parsed.data.suggestedTags.map((tag) => tag.trim()).filter(Boolean)
+    tagNames: parsed.data.suggestedTags.map((tag) => tag.trim()).filter(Boolean),
+    morphemes: parsed.data.morphemes.map((morpheme) => ({
+      kind: morpheme.kind,
+      form: morpheme.form.trim(),
+      canonicalForm: morpheme.canonicalForm.trim(),
+      meaning: morpheme.meaning.trim()
+    })),
+    formationSummary: parsed.data.formationSummary.trim()
   }
 }
 
