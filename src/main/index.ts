@@ -1,12 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import path from 'node:path'
 import { existsSync, mkdirSync, promises as fs, readdirSync, statSync, unlinkSync } from 'node:fs'
-import { AiProviderRegistry, OllamaProvider } from './ai-provider'
+import { AiProviderRegistry } from './ai-provider'
 import { wordsToCsv } from './data-export'
-import { AppDatabase } from './database'
+import { AppDatabase, type SecretCodec } from './database'
+import { DeepSeekProvider } from './deepseek'
 import { QueueProcessor } from './queue-processor'
 import { RootIndexer } from './root-indexer'
-import type { AppSettings, ExportFormat, WordDraft, WordFilters } from '../shared/types'
+import type { AppSettings, AppSettingsView, ExportFormat, WordDraft, WordFilters } from '../shared/types'
 
 let windowRef: BrowserWindow | null = null
 let database: AppDatabase
@@ -16,6 +17,39 @@ let providers: AiProviderRegistry
 let backupTimer: NodeJS.Timeout | null = null
 
 const notifyChanged = (): void => windowRef?.webContents.send('words:changed')
+const secretCodec: SecretCodec = {
+  encode: (value) => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('系统安全存储不可用，无法保存 DeepSeek API Key。')
+    return `safe:v1:${safeStorage.encryptString(value).toString('base64')}`
+  },
+  decode: (value) => {
+    if (!value.startsWith('safe:v1:')) return value
+    try {
+      return safeStorage.decryptString(Buffer.from(value.slice('safe:v1:'.length), 'base64'))
+    } catch {
+      return ''
+    }
+  }
+}
+const toSettingsView = (settings: AppSettings): AppSettingsView => ({
+  aiProvider: 'deepseek',
+  deepseekApiUrl: settings.deepseekApiUrl,
+  deepseekModel: settings.deepseekModel,
+  deepseekApiKey: '',
+  hasDeepseekApiKey: Boolean(settings.deepseekApiKey),
+  clearDeepseekApiKey: false,
+  dictionaryPath: settings.dictionaryPath
+})
+const mergeSettingsView = (view: AppSettingsView): AppSettings => {
+  const current = database.getSettings()
+  return {
+    aiProvider: 'deepseek',
+    deepseekApiUrl: view.deepseekApiUrl.trim(),
+    deepseekModel: view.deepseekModel.trim() || 'deepseek-v4-flash',
+    deepseekApiKey: view.clearDeepseekApiKey ? '' : view.deepseekApiKey.trim() || current.deepseekApiKey,
+    dictionaryPath: view.dictionaryPath.trim()
+  }
+}
 
 async function refreshRootMatches(wordId: string): Promise<void> {
   const entry = database.getWord(wordId)
@@ -149,20 +183,19 @@ function setupIpc(): void {
     notifyChanged()
   })
   ipcMain.handle('tags:list', () => database.listTags())
-  ipcMain.handle('settings:get', () => database.getSettings())
-  ipcMain.handle('settings:save', (_event, settings: AppSettings) => {
-    const saved = database.saveSettings(settings)
+  ipcMain.handle('settings:get', () => toSettingsView(database.getSettings()))
+  ipcMain.handle('settings:save', (_event, view: AppSettingsView) => {
+    const saved = database.saveSettings(mergeSettingsView(view))
     notifyChanged()
     void refreshAllRootMatches().catch((error: unknown) => {
       console.error('全部词根关联刷新失败：', error)
       notifyChanged()
     })
     void processor.processNext()
-    return saved
+    return toSettingsView(saved)
   })
-  ipcMain.handle('ollama:check', (_event, url?: string) => {
-    const settings = database.getSettings()
-    return providers.get('ollama').check({ ...settings, ollamaUrl: url?.trim() || settings.ollamaUrl })
+  ipcMain.handle('deepseek:check', (_event, view: AppSettingsView) => {
+    return providers.get('deepseek').check(mergeSettingsView(view))
   })
   ipcMain.handle('queue:status', () => processor.getStatus())
   ipcMain.handle('queue:set-paused', (_event, paused: boolean) => processor.setPaused(paused))
@@ -220,9 +253,9 @@ function setupIpc(): void {
 app.whenReady().then(async () => {
   app.setName('生词本')
   Menu.setApplicationMenu(null)
-  database = new AppDatabase(app.getPath('userData'))
+  database = new AppDatabase(app.getPath('userData'), secretCodec)
   rootIndexer = new RootIndexer(database.directory)
-  providers = new AiProviderRegistry([new OllamaProvider()])
+  providers = new AiProviderRegistry([new DeepSeekProvider()])
   processor = new QueueProcessor(database, providers, notifyChanged)
   setupIpc()
   createWindow()

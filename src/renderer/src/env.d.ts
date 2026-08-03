@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 
 import type {
-  AppSettings,
+  AppSettingsView,
   Category,
+  DeepSeekStatus,
   ExportFormat,
-  OllamaStatus,
   QueueStatus,
   RootIndexStatus,
   Tag,
@@ -40,10 +40,10 @@ declare global {
       }
       tags: { list: () => Promise<Tag[]> }
       settings: {
-        get: () => Promise<AppSettings>
-        save: (settings: AppSettings) => Promise<AppSettings>
+        get: () => Promise<AppSettingsView>
+        save: (settings: AppSettingsView) => Promise<AppSettingsView>
       }
-      ollama: { check: (url?: string) => Promise<OllamaStatus> }
+      deepseek: { check: (settings: AppSettingsView) => Promise<DeepSeekStatus> }
       queue: {
         status: () => Promise<QueueStatus>
         setPaused: (paused: boolean) => Promise<QueueStatus>

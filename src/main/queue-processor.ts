@@ -47,7 +47,7 @@ export class QueueProcessor {
       const settings = this.database.getSettings()
       const provider = this.providers.get(settings.aiProvider)
       const connection = await provider.check(settings)
-      if (!connection.available || (!settings.ollamaModel && !connection.models.length)) return
+      if (!connection.available || (!settings.deepseekModel && !connection.models.length)) return
       if (!this.database.isTaskPending(task.taskId)) return
 
       const entry = this.database.getWord(task.wordId)
@@ -71,7 +71,9 @@ export class QueueProcessor {
     } catch (error) {
       if (!this.database.isTaskProcessing(task.taskId)) return
       const message = error instanceof Error ? error.message : 'AI 处理失败。'
-      const retryLater = /fetch failed|timed out|abort|network/i.test(message)
+      const retryLater = (
+        error instanceof Error && 'retryable' in error && error.retryable === true
+      ) || /fetch failed|timed out|abort|network/i.test(message)
       if (retryLater) {
         this.database.setTaskStatus(task.taskId, 'pending')
         this.database.setWordStatus(task.wordId, 'pending')

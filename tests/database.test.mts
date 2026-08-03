@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { AppDatabase } from '../src/main/database.ts'
+import { AppDatabase, type SecretCodec } from '../src/main/database.ts'
 
 const createDatabase = () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-test-'))
@@ -83,6 +83,57 @@ test('legacy review records become ready when the database reopens', (context) =
   const migrated = reopened.getWord(created.entry.id)
   assert.equal(migrated?.status, 'ready')
   assert.equal(migrated?.categoryName, 'AI 分类')
+})
+
+test('legacy Ollama settings migrate to DeepSeek defaults', (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-deepseek-migration-'))
+  const first = new AppDatabase(directory)
+  first.close()
+
+  const raw = new Database(path.join(directory, 'shengciben.sqlite'))
+  raw.prepare(`UPDATE settings SET value = 'ollama' WHERE key = 'aiProvider'`).run()
+  raw.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('ollamaUrl', 'http://127.0.0.1:11434')`).run()
+  raw.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('ollamaModel', 'legacy-model')`).run()
+  raw.prepare(`DELETE FROM settings WHERE key IN ('deepseekApiUrl', 'deepseekModel', 'deepseekApiKey')`).run()
+  raw.close()
+
+  const reopened = new AppDatabase(directory)
+  context.after(() => {
+    reopened.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  assert.deepEqual(reopened.getSettings(), {
+    aiProvider: 'deepseek',
+    deepseekApiUrl: 'https://api.deepseek.com',
+    deepseekModel: 'deepseek-v4-flash',
+    deepseekApiKey: '',
+    dictionaryPath: ''
+  })
+})
+
+test('DeepSeek API key is encoded at rest and decoded through settings', (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-secret-'))
+  const codec: SecretCodec = {
+    encode: (value) => `encrypted:${value}`,
+    decode: (value) => value.replace(/^encrypted:/, '')
+  }
+  const database = new AppDatabase(directory, codec)
+  context.after(() => {
+    database.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  database.saveSettings({
+    ...database.getSettings(),
+    deepseekApiKey: 'sk-secret'
+  })
+
+  assert.equal(database.getSettings().deepseekApiKey, 'sk-secret')
+  const raw = new Database(path.join(directory, 'shengciben.sqlite'), { readonly: true })
+  const stored = raw.prepare(`SELECT value FROM settings WHERE key = 'deepseekApiKey'`).get() as { value: string }
+  raw.close()
+  assert.equal(stored.value, 'encrypted:sk-secret')
 })
 
 test('interrupted processing tasks return to pending when the database reopens', (context) => {

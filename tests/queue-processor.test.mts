@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { AppDatabase } from '../src/main/database.ts'
+import { DeepSeekApiError } from '../src/main/deepseek.ts'
 import { QueueProcessor } from '../src/main/queue-processor.ts'
 
 test('an in-flight AI response cannot overwrite a manual save', async (context) => {
@@ -22,7 +23,7 @@ test('an in-flight AI response cannot overwrite a manual save', async (context) 
     tagNames: string[]
   }>()
   const provider = {
-    id: 'ollama',
+    id: 'deepseek',
     check: async () => ({ available: true, models: ['test'], message: 'ok' }),
     enrich: async () => {
       started.resolve()
@@ -69,7 +70,7 @@ test('a manual save during provider detection prevents AI from starting', async 
   const connection = Promise.withResolvers<{ available: boolean; models: string[]; message: string }>()
   let enrichCalled = false
   const provider = {
-    id: 'ollama',
+    id: 'deepseek',
     check: async () => {
       checkStarted.resolve()
       return connection.promise
@@ -108,7 +109,7 @@ test('paused queue does not claim the next task', async (context) => {
   database.createWord('Paused')
   let checkCalled = false
   const provider = {
-    id: 'ollama',
+    id: 'deepseek',
     check: async () => {
       checkCalled = true
       return { available: true, models: ['test'], message: 'ok' }
@@ -124,4 +125,27 @@ test('paused queue does not claim the next task', async (context) => {
 
   assert.equal(checkCalled, false)
   assert.deepEqual(processor.getStatus(), { pending: 1, processing: 0, failed: 0, paused: true })
+})
+
+test('retryable DeepSeek failures return the word to the pending queue', async (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-deepseek-retry-'))
+  const database = new AppDatabase(directory)
+  context.after(() => {
+    database.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const created = database.createWord('Retryable')
+  const provider = {
+    id: 'deepseek',
+    check: async () => ({ available: true, models: ['deepseek-v4-flash'], message: 'ok' }),
+    enrich: async () => {
+      throw new DeepSeekApiError(429, 'DeepSeek 请求过于频繁，请稍后重试。', true)
+    }
+  }
+  const processor = new QueueProcessor(database, { get: () => provider }, () => undefined)
+
+  await processor.processNext()
+
+  assert.equal(database.getWord(created.entry.id)?.status, 'pending')
+  assert.deepEqual(processor.getStatus(), { pending: 1, processing: 0, failed: 0, paused: false })
 })

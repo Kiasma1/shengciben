@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppSettings, ExportFormat, WordDraft, WordFilters } from '../shared/types'
+import type { AppSettingsView, ExportFormat, WordDraft, WordFilters } from '../shared/types'
 
 contextBridge.exposeInMainWorld('api', {
   window: {
@@ -30,9 +30,9 @@ contextBridge.exposeInMainWorld('api', {
   tags: { list: () => ipcRenderer.invoke('tags:list') },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
-    save: (settings: AppSettings) => ipcRenderer.invoke('settings:save', settings)
+    save: (settings: AppSettingsView) => ipcRenderer.invoke('settings:save', settings)
   },
-  ollama: { check: (url?: string) => ipcRenderer.invoke('ollama:check', url) },
+  deepseek: { check: (settings: AppSettingsView) => ipcRenderer.invoke('deepseek:check', settings) },
   queue: {
     status: () => ipcRenderer.invoke('queue:status'),
     setPaused: (paused: boolean) => ipcRenderer.invoke('queue:set-paused', paused),

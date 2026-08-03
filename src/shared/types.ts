@@ -65,13 +65,24 @@ export interface WordDraft {
 }
 
 export interface AppSettings {
-  aiProvider: 'ollama'
-  ollamaUrl: string
-  ollamaModel: string
+  aiProvider: 'deepseek'
+  deepseekApiUrl: string
+  deepseekModel: string
+  deepseekApiKey: string
   dictionaryPath: string
 }
 
-export interface OllamaStatus {
+export interface AppSettingsView {
+  aiProvider: 'deepseek'
+  deepseekApiUrl: string
+  deepseekModel: string
+  deepseekApiKey: string
+  hasDeepseekApiKey: boolean
+  clearDeepseekApiKey: boolean
+  dictionaryPath: string
+}
+
+export interface DeepSeekStatus {
   available: boolean
   models: string[]
   message: string

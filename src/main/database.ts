@@ -18,10 +18,21 @@ import type {
 
 const UNCATEGORIZED_ID = 'uncategorized'
 const DEFAULT_SETTINGS: AppSettings = {
-  aiProvider: 'ollama',
-  ollamaUrl: 'http://127.0.0.1:11434',
-  ollamaModel: '',
+  aiProvider: 'deepseek',
+  deepseekApiUrl: 'https://api.deepseek.com',
+  deepseekModel: 'deepseek-v4-flash',
+  deepseekApiKey: '',
   dictionaryPath: ''
+}
+
+export interface SecretCodec {
+  encode(value: string): string
+  decode(value: string): string
+}
+
+const identitySecretCodec: SecretCodec = {
+  encode: (value) => value,
+  decode: (value) => value
 }
 
 type WordRow = {
@@ -44,11 +55,13 @@ const normalizeWord = (value: string): string => value.trim().toLocaleLowerCase(
 
 export class AppDatabase {
   private readonly db: Database.Database
+  private readonly secretCodec: SecretCodec
   readonly directory: string
   readonly filePath: string
 
-  constructor(directory: string) {
+  constructor(directory: string, secretCodec: SecretCodec = identitySecretCodec) {
     this.directory = directory
+    this.secretCodec = secretCodec
     mkdirSync(directory, { recursive: true })
     this.filePath = path.join(directory, 'shengciben.sqlite')
     this.db = new Database(this.filePath)
@@ -138,6 +151,8 @@ export class AppDatabase {
     }
 
     this.db.transaction(() => {
+      this.db.prepare(`UPDATE settings SET value = 'deepseek' WHERE key = 'aiProvider'`).run()
+      this.db.prepare(`DELETE FROM settings WHERE key IN ('ollamaUrl', 'ollamaModel')`).run()
       this.db.prepare(`UPDATE tasks SET status = 'pending', error = NULL, updated_at = ? WHERE status = 'processing'`).run(now())
       this.db.prepare(`UPDATE words SET enrichment_status = 'pending', ai_error = NULL, updated_at = ? WHERE enrichment_status = 'processing'`).run(now())
       const legacySuggestions = this.db
@@ -323,13 +338,18 @@ export class AppDatabase {
   getSettings(): AppSettings {
     const rows = this.db.prepare('SELECT key, value FROM settings').all() as { key: keyof AppSettings; value: string }[]
     const entries = rows.map((row) => [row.key, row.value])
-    return { ...DEFAULT_SETTINGS, ...Object.fromEntries(entries) } as AppSettings
+    const settings = { ...DEFAULT_SETTINGS, ...Object.fromEntries(entries) } as AppSettings
+    settings.deepseekApiKey = settings.deepseekApiKey ? this.secretCodec.decode(settings.deepseekApiKey) : ''
+    return settings
   }
 
   saveSettings(settings: AppSettings): AppSettings {
     const statement = this.db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
     const transaction = this.db.transaction(() => {
-      for (const [key, value] of Object.entries(settings)) statement.run(key, value.trim())
+      for (const [key, value] of Object.entries(settings)) {
+        const cleanValue = value.trim()
+        statement.run(key, key === 'deepseekApiKey' && cleanValue ? this.secretCodec.encode(cleanValue) : cleanValue)
+      }
     })
     transaction()
     return this.getSettings()
