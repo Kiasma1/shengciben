@@ -19,6 +19,26 @@ const createDatabase = () => {
   }
 }
 
+test('createWord 把复数规范为单数并与已有单数去重', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const first = fixture.database.createWord('Apple')
+  const second = fixture.database.createWord('  apples  ')
+  assert.equal(first.entry.word, 'apple')
+  assert.equal(second.duplicate, true)
+  assert.equal(second.entry.id, first.entry.id)
+})
+
+test('createWord 保留专有名词大小写并与小写形式去重', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const first = fixture.database.createWord('China')
+  const second = fixture.database.createWord('china')
+  assert.equal(first.entry.word, 'China')
+  assert.equal(second.duplicate, true)
+  assert.equal(second.entry.id, first.entry.id)
+})
+
 test('manual save completes the AI task and marks the word ready', (context) => {
   const fixture = createDatabase()
   context.after(fixture.cleanup)
@@ -167,7 +187,7 @@ test('word search includes the AI formation summary', (context) => {
     formationSummary: 'vers（转）+ -ion（名词后缀）→ 转换。'
   })
 
-  assert.deepEqual(fixture.database.listWords({ query: '名词后缀' }).map((entry) => entry.word), ['Conversion'])
+  assert.deepEqual(fixture.database.listWords({ query: '名词后缀' }).map((entry) => entry.word), ['conversion'])
 })
 
 test('legacy completed words are queued once for background morphology enrichment', (context) => {
@@ -352,7 +372,7 @@ test('empty trash permanently deletes only trashed words and their queued tasks'
   assert.equal(fixture.database.emptyTrash(), 2)
   assert.equal(fixture.database.getWord(firstTrashed.entry.id), null)
   assert.equal(fixture.database.getWord(secondTrashed.entry.id), null)
-  assert.equal(fixture.database.getWord(active.entry.id)?.word, 'Active')
+  assert.equal(fixture.database.getWord(active.entry.id)?.word, 'active')
   assert.equal(fixture.database.getQueueStatus(false).pending, 1)
   assert.equal(fixture.database.emptyTrash(), 0)
 })

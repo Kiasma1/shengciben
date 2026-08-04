@@ -676,7 +676,8 @@ function AddWordDialog({ motionState, onClose, onCreated, onToast }: { motionSta
     setCreating(true)
     try {
       const result = await window.api.words.create(word)
-      onToast('success', result.duplicate ? '该单词已存在，已为你打开。' : '单词已加入待 AI 处理队列。')
+      const corrected = word.trim() !== result.entry.word
+      onToast('success', result.duplicate ? '该单词已存在，已为你打开。' : corrected ? `已自动将输入规范为「${result.entry.word}」，加入待 AI 处理队列。` : '单词已加入待 AI 处理队列。')
       onCreated(result)
     } catch (error) {
       onToast('error', messageOf(error))

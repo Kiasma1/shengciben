@@ -17,6 +17,7 @@ import type {
   WordFilters,
   WordSense
 } from '../shared/types'
+import pluralize from 'pluralize'
 
 const UNCATEGORIZED_ID = 'uncategorized'
 const MORPHOLOGY_VERSION = 1
@@ -57,6 +58,82 @@ type WordRow = {
 
 const now = (): string => new Date().toISOString()
 const normalizeWord = (value: string): string => value.trim().toLocaleLowerCase('en-US')
+
+// pluralize 库的规则覆盖不了的词，手动修正
+const PLURAL_OVERRIDES: Record<string, string> = {
+  // 以 -ie 结尾的词加 s 后同样以 -ies 结尾，规则会误判成 -y
+  cookies: 'cookie',
+  calories: 'calorie',
+  brownies: 'brownie',
+  selfies: 'selfie',
+  genies: 'genie',
+  collies: 'collie',
+  rookies: 'rookie',
+  // 现代用法中作不可数名词处理
+  data: 'data',
+  media: 'media'
+}
+
+// pluralize 库未覆盖的以 -ics 结尾的不可数名词，保持原样
+const UNCOUNTABLE_ICS = new Set([
+  'physics', 'mathematics', 'economics', 'politics', 'statistics',
+  'ethics', 'gymnastics', 'linguistics', 'electronics', 'mechanics',
+  'optics', 'genetics', 'aesthetics', 'athletics', 'classics'
+])
+
+// 专有名词白名单（键为小写）：这些词保留用户输入的大小写，不强制转小写。
+// 收录常用国家/地区、语言、民族、主要城市、月份、星期；未收录的专有名词按默认规则转小写。
+// ponytail: 静态列表，覆盖面有限；若需要完整支持可换成词典/实体库查询。
+const PROPER_NOUNS = new Set([
+  // 国家/地区
+  'china', 'japan', 'korea', 'america', 'usa', 'uk', 'britain', 'england', 'scotland', 'wales', 'ireland',
+  'france', 'germany', 'italy', 'spain', 'portugal', 'greece', 'russia', 'ukraine', 'poland', 'sweden',
+  'norway', 'denmark', 'finland', 'iceland', 'netherlands', 'belgium', 'switzerland', 'austria', 'hungary',
+  'romania', 'bulgaria', 'czech', 'slovakia', 'croatia', 'serbia', 'turkey', 'israel', 'egypt', 'morocco',
+  'algeria', 'tunisia', 'nigeria', 'kenya', 'ethiopia', 'ghana', 'canada', 'mexico', 'brazil', 'argentina',
+  'chile', 'peru', 'colombia', 'venezuela', 'cuba', 'india', 'pakistan', 'bangladesh', 'nepal', 'thailand',
+  'vietnam', 'malaysia', 'singapore', 'indonesia', 'philippines', 'australia', 'fiji', 'iran', 'iraq',
+  'afghanistan', 'qatar', 'kuwait', 'jordan', 'syria', 'lebanon', 'mongolia', 'kazakhstan', 'uzbekistan',
+  'taiwan', 'tibet', 'macau', 'cyprus', 'barbados', 'maldives', 'jamaica', 'haiti', 'bahamas', 'bermuda',
+  'greenland', 'antarctica',
+  // 语言/民族
+  'english', 'chinese', 'japanese', 'korean', 'french', 'german', 'italian', 'spanish', 'portuguese',
+  'russian', 'arabic', 'hindi', 'dutch', 'greek', 'latin', 'swedish', 'norwegian', 'danish', 'finnish',
+  'polish', 'turkish', 'thai', 'vietnamese', 'hebrew', 'urdu', 'bengali', 'malay', 'indonesian',
+  'tagalog', 'persian', 'ukrainian', 'romanian', 'hungarian', 'gaelic', 'welsh', 'irish',
+  'american', 'british', 'canadian', 'mexican', 'brazilian', 'argentine', 'chilean', 'colombian',
+  'peruvian', 'cuban', 'indian', 'pakistani', 'nepali', 'malaysian', 'singaporean', 'filipino',
+  'philippine', 'australian', 'scottish', 'belgian', 'swiss', 'austrian', 'slovak', 'croatian',
+  'serbian', 'bulgarian', 'israeli', 'egyptian', 'moroccan', 'algerian', 'tunisian', 'nigerian',
+  'kenyan', 'ethiopian', 'ghanaian', 'african', 'asian', 'european', 'arab',
+  // 主要城市
+  'london', 'paris', 'tokyo', 'beijing', 'shanghai', 'moscow', 'rome', 'berlin', 'madrid', 'lisbon',
+  'athens', 'vienna', 'amsterdam', 'brussels', 'zurich', 'geneva', 'stockholm', 'oslo', 'copenhagen',
+  'helsinki', 'warsaw', 'prague', 'budapest', 'kiev', 'istanbul', 'cairo', 'jerusalem', 'riyadh',
+  'dubai', 'tehran', 'baghdad', 'karachi', 'mumbai', 'delhi', 'bangkok', 'hanoi', 'manila', 'jakarta',
+  'seoul', 'sydney', 'melbourne', 'auckland', 'toronto', 'vancouver', 'montreal', 'washington', 'chicago',
+  'boston', 'miami', 'houston', 'seattle', 'lagos', 'nairobi', 'casablanca', 'marrakech', 'dublin',
+  'edinburgh', 'manchester', 'munich', 'naples', 'venice', 'florence', 'barcelona',
+  // 月份/星期
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october',
+  'november', 'december', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'
+])
+
+/**
+ * 规范用户输入的单词：去除首尾与多余空格；字母默认全部转小写，
+ * 专有名词（国家、语言、民族、主要城市、月份、星期等）保留用户输入的大小写；
+ * 单个单词自动把复数转为单数。多词短语（如 "ad hoc"）保留内部空格，原样返回。
+ */
+export const normalizeWordInput = (raw: string): string => {
+  const cleaned = raw.trim().replace(/\s+/g, ' ')
+  if (cleaned.includes(' ')) return cleaned
+  const lower = cleaned.toLocaleLowerCase('en-US')
+  if (PROPER_NOUNS.has(lower)) return cleaned
+  if (UNCOUNTABLE_ICS.has(lower)) return lower
+  const singular = PLURAL_OVERRIDES[lower] ?? pluralize.singular(cleaned)
+  const singularLower = singular.toLocaleLowerCase('en-US')
+  return PROPER_NOUNS.has(singularLower) ? singular : singularLower
+}
 
 export class AppDatabase {
   private readonly db: Database.Database
@@ -270,7 +347,7 @@ export class AppDatabase {
   }
 
   createWord(rawWord: string): WordCreateResult {
-    const word = rawWord.trim()
+    const word = normalizeWordInput(rawWord)
     const normalizedWord = normalizeWord(word)
     if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(word)) {
       throw new Error('请输入单个英文单词；可包含连字符或撇号。')
