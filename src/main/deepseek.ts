@@ -76,7 +76,11 @@ export async function enrichWithDeepSeek(
     body: JSON.stringify({
       model: input.model,
       stream: false,
-      max_tokens: 1200,
+      // V4 思考型模型（deepseek-v4-flash 默认开启 thinking）的推理 token 计入 max_tokens；
+      // 预算不足时最终 content 会返回空，1200 常被思考链耗尽，故放宽到 8000
+      max_tokens: 8000,
+      // 词条富集是结构化 JSON 任务，无需深度推理：关闭思考模式更快、更便宜、且 content 不再为空
+      thinking: { type: 'disabled' },
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -92,9 +96,12 @@ export async function enrichWithDeepSeek(
     })
   })
   if (!response.ok) throw apiError(response.status)
-  const payload = (await response.json()) as { choices?: { message?: { content?: string | null } }[] }
+  const payload = (await response.json()) as { choices?: { message?: { content?: string | null; reasoning_content?: string | null } }[] }
   const content = payload.choices?.[0]?.message?.content
-  if (!content) throw new Error('DeepSeek 没有返回内容。')
+  if (!content) {
+    const reasoning = payload.choices?.[0]?.message?.reasoning_content
+    throw new Error(reasoning ? 'DeepSeek 推理消耗了全部输出预算，没有返回内容，请重试。' : 'DeepSeek 没有返回内容。')
+  }
   const parsed = enrichmentSchema.safeParse(JSON.parse(content))
   if (!parsed.success) throw new Error('DeepSeek 返回的字段不完整。')
   return {

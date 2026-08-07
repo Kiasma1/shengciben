@@ -71,6 +71,8 @@ test('DeepSeek enrichment requests JSON output and parses the vocabulary fields'
   assert.equal(requestBody.model, 'deepseek-v4-flash')
   assert.deepEqual(requestBody.response_format, { type: 'json_object' })
   assert.equal(requestBody.stream, false)
+  assert.equal(requestBody.max_tokens, 8000)
+  assert.deepEqual(requestBody.thinking, { type: 'disabled' })
   assert.deepEqual(enrichment, {
     ipaUk: 'kənˈvɜːʃən',
     senses: [{ partOfSpeech: 'noun', definitionZh: '转换；转化' }],
@@ -149,6 +151,43 @@ test('DeepSeek enrichment maps official API errors and retryability', async (con
       )
     })
   }
+})
+
+test('DeepSeek 空内容：仅推理无正文时报出推理耗尽原因', async () => {
+  const fetcher: typeof fetch = async () => new Response(JSON.stringify({
+    choices: [{
+      finish_reason: 'length',
+      message: { content: '', reasoning_content: '先分析一下这个词…' }
+    }]
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+
+  await assert.rejects(
+    enrichWithDeepSeek({
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+      model: 'deepseek-v4-flash',
+      word: 'conversion',
+      existingCategories: []
+    }, fetcher),
+    /推理消耗了全部输出预算/
+  )
+})
+
+test('DeepSeek 空内容：无推理字段时报没有返回内容', async () => {
+  const fetcher: typeof fetch = async () => new Response(JSON.stringify({
+    choices: [{ finish_reason: 'stop', message: { content: '' } }]
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+
+  await assert.rejects(
+    enrichWithDeepSeek({
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-test',
+      model: 'deepseek-v4-flash',
+      word: 'conversion',
+      existingCategories: []
+    }, fetcher),
+    /DeepSeek 没有返回内容/
+  )
 })
 
 test('AI provider registry resolves DeepSeek and checks it with stored settings', async () => {
