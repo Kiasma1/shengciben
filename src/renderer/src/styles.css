@@ -161,6 +161,7 @@ p { text-wrap: pretty; }
 .titlebar { -webkit-app-region: drag; -webkit-backdrop-filter: var(--material-glass-regular); align-items: center; backdrop-filter: var(--material-glass-regular); background: var(--color-titlebar); border-bottom: 1px solid var(--glass-border); box-shadow: inset 0 -1px 0 rgb(28 28 28 / 8%); color: var(--color-sidebar-text); display: grid; grid-template-columns: auto 1fr auto; height: var(--titlebar-height); position: relative; user-select: none; z-index: calc(var(--z-raised) + 1); }
 .titlebar button { -webkit-app-region: no-drag; }
 .titlebar-brand { align-items: center; display: flex; font-size: var(--text-sm); font-weight: 720; gap: var(--space-2); height: 100%; letter-spacing: -0.01em; padding: 0 var(--space-4); }
+.titlebar-version { color: var(--text-secondary); font-size: 0.72rem; font-weight: 500; letter-spacing: 0; }
 .titlebar-mark { align-items: center; background: var(--button-primary-bg); border: 1px solid rgb(255 255 255 / 62%); border-radius: 0.55rem; box-shadow: 0 5px 14px rgb(0 0 0 / 22%), inset 0 1px 0 rgb(255 255 255 / 42%); color: var(--color-on-action); display: inline-flex; height: 1.7rem; justify-content: center; width: 1.7rem; }
 .titlebar-spacer { height: 100%; }
 .window-controls { -webkit-app-region: no-drag; display: flex; height: 100%; padding-right: var(--space-1); }

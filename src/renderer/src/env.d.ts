@@ -17,6 +17,9 @@ import type {
 declare global {
   interface Window {
     api: {
+      app: {
+        version: () => Promise<string>
+      }
       window: {
         isMaximized: () => Promise<boolean>
         minimize: () => void

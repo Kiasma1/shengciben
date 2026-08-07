@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { AppSettingsView, ExportFormat, WordDraft, WordFilters } from '../shared/types'
 
 contextBridge.exposeInMainWorld('api', {
+  app: {
+    version: () => ipcRenderer.invoke('app:version')
+  },
   window: {
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
     minimize: () => ipcRenderer.send('window:minimize'),

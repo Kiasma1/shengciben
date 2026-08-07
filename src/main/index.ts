@@ -141,6 +141,7 @@ function stopBackupSchedule(): void {
 }
 
 function setupIpc(): void {
+  ipcMain.handle('app:version', () => app.getVersion())
   ipcMain.handle('window:is-maximized', (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false)
   ipcMain.on('window:minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize())
   ipcMain.on('window:toggle-maximize', (event) => {

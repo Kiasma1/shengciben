@@ -90,6 +90,7 @@ export default function App(): ReactElement {
   const [categoryOpen, setCategoryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [maximized, setMaximized] = useState(false)
+  const [appVersion, setAppVersion] = useState('')
   const [detailDirty, setDetailDirty] = useState(false)
   const [toast, setToast] = useState<Toast>(null)
   const [toastClosing, setToastClosing] = useState(false)
@@ -192,6 +193,10 @@ export default function App(): ReactElement {
   }, [])
 
   useEffect(() => {
+    void window.api.app.version().then(setAppVersion)
+  }, [])
+
+  useEffect(() => {
     setDetailDirty(false)
   }, [selectedId])
 
@@ -265,6 +270,7 @@ export default function App(): ReactElement {
     <div className="app-frame">
       <TitleBar
         maximized={maximized}
+        version={appVersion}
         onMinimize={() => window.api.window.minimize()}
         onToggleMaximize={() => window.api.window.toggleMaximize()}
         onClose={closeWindow}
@@ -408,11 +414,13 @@ export default function App(): ReactElement {
 
 function TitleBar({
   maximized,
+  version,
   onMinimize,
   onToggleMaximize,
   onClose
 }: {
   maximized: boolean
+  version: string
   onMinimize: () => void
   onToggleMaximize: () => void
   onClose: () => void
@@ -421,7 +429,7 @@ function TitleBar({
     <header className="titlebar" onDoubleClick={(event) => {
       if (!(event.target as HTMLElement).closest('button')) onToggleMaximize()
     }}>
-      <div className="titlebar-brand"><span className="titlebar-mark"><BookOpen size={15} /></span><span>生词本</span></div>
+      <div className="titlebar-brand"><span className="titlebar-mark"><BookOpen size={15} /></span><span>生词本</span>{version && <span className="titlebar-version">v{version}</span>}</div>
       <div className="titlebar-spacer" />
       <div className="window-controls">
         <button onClick={onMinimize} aria-label="最小化"><Minus size={16} /></button>
