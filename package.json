@@ -1,6 +1,6 @@
 {
   "name": "shengciben",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DeepSeek AI 生词本",
   "main": "./out/main/index.js",
   "author": "",
