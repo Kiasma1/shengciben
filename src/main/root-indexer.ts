@@ -247,7 +247,17 @@ export class RootIndexer {
   async reconcile(word: string, morphemes: AiMorpheme[], sourcePath: string): Promise<RootMatch[]> {
     await this.ensure(sourcePath)
     const directMatches = await this.match(word, sourcePath)
-    const candidates = morphemes.map((morpheme, sortOrder): RootMatch => {
+    // 形态校验：AI 幻觉词素（form 未连续出现在单词中）一律丢弃。
+    // 真实构词成分的 form 必为单词的连续子串；canonicalForm 参与兼容（异体如 vert / vers）。
+    const wordLower = normalized(word)
+    const present = (value: string): boolean =>
+      rootForms(value).some((form) => {
+        const surface = rootLookupIdentity(form)
+        return surface.length > 0 && wordLower.includes(surface)
+      })
+    const candidates = morphemes
+      .filter((morpheme) => present(morpheme.form) || present(morpheme.canonicalForm))
+      .map((morpheme, sortOrder): RootMatch => {
       const candidateForms = [...rootForms(morpheme.canonicalForm), ...rootForms(morpheme.form)]
       const dictionaryMatch = candidateForms
         .map((form) => this.index?.roots[rootLookupIdentity(form)])

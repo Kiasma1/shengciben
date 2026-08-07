@@ -391,3 +391,58 @@ test('root matches collapse abbreviated forms from the same root family and sour
   assert.deepEqual(matches.map((match) => match.root), ['ambi, ambo, amb, an'])
   assert.deepEqual((await indexer.match('toward', dictionaryPath)).map((match) => match.root), ['a-1'])
 })
+
+test('reconcile 拦截不在单词中的 AI 幻觉词素（similar 案例）', async (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-roots-'))
+  context.after(() => rmSync(directory, { recursive: true, force: true }))
+  const dictionaryPath = path.join(directory, 'roots.html')
+  writeFileSync(dictionaryPath, [
+    '<h2 id="root-simil"><code>simil</code></h2>',
+    '<ul><li><strong>核心词根义</strong>：相似、相同。</li></ul>'
+  ].join(''))
+  const indexer = new RootIndexer(directory)
+
+  const matches = await indexer.reconcile('similar', [
+    { kind: 'root', form: 'simil', canonicalForm: 'simil', meaning: '相似、相同' },
+    { kind: 'suffix', form: '-ar', canonicalForm: '-ar', meaning: '形容词后缀' },
+    { kind: 'root', form: 'homo', canonicalForm: 'homo', meaning: '相同' },
+    { kind: 'root', form: 'idem', canonicalForm: 'idem', meaning: '相同' },
+    { kind: 'root', form: 'iso', canonicalForm: 'iso', meaning: '相同' },
+    { kind: 'root', form: 'taut', canonicalForm: 'taut', meaning: '相同' }
+  ], dictionaryPath)
+
+  assert.deepEqual(matches.map((match) => match.surfaceForm), ['simil', '-ar'])
+})
+
+test('reconcile 形态校验：全部幻觉词素时返回空', async (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-roots-'))
+  context.after(() => rmSync(directory, { recursive: true, force: true }))
+  const dictionaryPath = path.join(directory, 'roots.html')
+  writeFileSync(dictionaryPath, '<h2 id="root-x"><code>xyz</code></h2>')
+  const indexer = new RootIndexer(directory)
+
+  const matches = await indexer.reconcile('apple', [
+    { kind: 'root', form: 'homo', canonicalForm: 'homo', meaning: '相同' },
+    { kind: 'root', form: 'iso', canonicalForm: 'iso', meaning: '相同' }
+  ], dictionaryPath)
+
+  assert.equal(matches.length, 0)
+})
+
+test('reconcile 形态校验：大小写与带连字符形式均可通过', async (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-roots-'))
+  context.after(() => rmSync(directory, { recursive: true, force: true }))
+  const dictionaryPath = path.join(directory, 'roots.html')
+  writeFileSync(dictionaryPath, [
+    '<h2 id="root-con"><code>con-</code></h2>',
+    '<ul><li><strong>核心词根义</strong>：共同、一起。</li></ul>'
+  ].join(''))
+  const indexer = new RootIndexer(directory)
+
+  const matches = await indexer.reconcile('Connect', [
+    { kind: 'prefix', form: 'Con-', canonicalForm: 'con-', meaning: '共同' }
+  ], dictionaryPath)
+
+  assert.equal(matches.length, 1)
+  assert.equal(matches[0]?.surfaceForm, 'Con-')
+})

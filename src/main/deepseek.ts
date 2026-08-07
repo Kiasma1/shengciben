@@ -86,7 +86,7 @@ export async function enrichWithDeepSeek(
         {
           role: 'system',
           content:
-            '你是严谨的英语词汇与词源助理。只返回 JSON，不要 markdown。JSON 格式示例：{"ipaUk":"kənˈvɜːʃən","senses":[{"partOfSpeech":"noun","definitionZh":"转换；转化"}],"suggestedCategory":"通用词汇","suggestedTags":["变化"],"morphemes":[{"kind":"prefix","form":"con-","canonicalForm":"con-","meaning":"共同、一起"},{"kind":"root","form":"vers","canonicalForm":"vert / vers","meaning":"转、转变"},{"kind":"suffix","form":"-ion","canonicalForm":"-ion","meaning":"动作、过程或结果"}],"formationSummary":"con-（共同）+ vers（转）+ -ion（名词后缀）→ 转换。"}。IPA 必须使用英式发音；词性用简洁英文；中文释义简洁准确。分类优先从 existingCategories 选择。morphemes 按单词中的顺序返回 prefix、root、suffix，只给出有语言学依据的构词成分；不要把复数、过去式等屈折变化当作构词成分，不要因字母相似强行拆分。无法可靠拆分时必须返回空 morphemes，formationSummary 可为空。canonicalForm 使用规范词根或词缀形式，form 使用该单词中的表面形式。'
+            '你是严谨的英语词汇与词源助理。只返回 JSON，不要 markdown。JSON 格式示例：{"ipaUk":"kənˈvɜːʃən","senses":[{"partOfSpeech":"noun","definitionZh":"转换；转化"}],"suggestedCategory":"通用词汇","suggestedTags":["变化"],"morphemes":[{"kind":"prefix","form":"con-","canonicalForm":"con-","meaning":"共同、一起"},{"kind":"root","form":"vers","canonicalForm":"vert / vers","meaning":"转、转变"},{"kind":"suffix","form":"-ion","canonicalForm":"-ion","meaning":"动作、过程或结果"}],"formationSummary":"con-（共同）+ vers（转）+ -ion（名词后缀）→ 转换。"}。IPA 必须使用英式发音；词性用简洁英文；中文释义简洁准确。分类优先从 existingCategories 选择。morphemes 按单词中的顺序返回 prefix、root、suffix，只给出有语言学依据的构词成分；不要把复数、过去式等屈折变化当作构词成分，不要因字母相似强行拆分。硬性要求：每个构词成分的 form（或 canonicalForm 中的任一形式）必须逐字母连续出现在该单词中；仅含义相关但未出现在单词里的词根（如同义根 homo-、iso-、taut-、idem-）一律不得列为构词成分。无法可靠拆分时必须返回空 morphemes，formationSummary 可为空。canonicalForm 使用规范词根或词缀形式，form 使用该单词中的表面形式。'
         },
         {
           role: 'user',
