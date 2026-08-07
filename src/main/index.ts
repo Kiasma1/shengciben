@@ -262,7 +262,19 @@ function setupIpc(): void {
   })
 }
 
+// 双开实例会同时轮询任务表，重复调用 DeepSeek 计费，因此强制单实例
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!windowRef) return
+    if (windowRef.isMinimized()) windowRef.restore()
+    windowRef.focus()
+  })
+}
+
 app.whenReady().then(async () => {
+  if (!app.hasSingleInstanceLock()) return
   app.setName('生词本')
   Menu.setApplicationMenu(null)
   database = new AppDatabase(app.getPath('userData'), secretCodec)

@@ -376,3 +376,46 @@ test('empty trash permanently deletes only trashed words and their queued tasks'
   assert.equal(fixture.database.getQueueStatus(false).pending, 1)
   assert.equal(fixture.database.emptyTrash(), 0)
 })
+
+test('re-enrichment keeps existing senses and tags to protect manual edits', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const created = fixture.database.createWord('Guarded')
+  fixture.database.applyEnrichment(created.entry.id, {
+    ipaUk: 'ˈɡɑːdɪd',
+    senses: [{ partOfSpeech: 'noun', definitionZh: '有人看守的' }],
+    suggestedCategory: null,
+    tagNames: ['手动标签'],
+    morphemes: [],
+    formationSummary: ''
+  })
+
+  fixture.database.applyEnrichment(created.entry.id, {
+    ipaUk: 'ˈɡɑːdid',
+    senses: [{ partOfSpeech: 'adjective', definitionZh: 'AI 新释义' }],
+    suggestedCategory: 'AI 分类',
+    tagNames: ['AI 标签'],
+    morphemes: [],
+    formationSummary: '重新分析。'
+  })
+
+  const enriched = fixture.database.getWord(created.entry.id)
+  assert.deepEqual(enriched?.senses.map((sense) => sense.definitionZh), ['有人看守的'])
+  assert.deepEqual(enriched?.tags.map((tag) => tag.name), ['手动标签'])
+  assert.equal(enriched?.ipaUk, 'ˈɡɑːdid')
+  assert.equal(enriched?.formationSummary, '重新分析。')
+})
+
+test('retryable failures count up and manual retry resets the counter', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const created = fixture.database.createWord('Flaky')
+  const task = fixture.database.nextPendingTask()
+  assert.ok(task)
+
+  assert.equal(fixture.database.bumpTaskRetry(task.taskId), 1)
+  assert.equal(fixture.database.bumpTaskRetry(task.taskId), 2)
+
+  fixture.database.retryTask(created.entry.id)
+  assert.equal(fixture.database.bumpTaskRetry(task.taskId), 1)
+})

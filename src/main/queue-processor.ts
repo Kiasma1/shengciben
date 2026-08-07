@@ -4,6 +4,9 @@ import type { AiMorpheme, QueueStatus, RootMatch } from '../shared/types'
 
 type MorphemeResolver = (word: string, morphemes: AiMorpheme[]) => Promise<RootMatch[]>
 
+// 可重试错误（429/断网等）的重试上限，避免 API 持续异常时无限轮询
+const MAX_TASK_RETRIES = 10
+
 const aiOnlyMorphemes: MorphemeResolver = async (_word, morphemes) => morphemes.map((morpheme, sortOrder) => ({
   root: morpheme.canonicalForm,
   surfaceForm: morpheme.form,
@@ -99,8 +102,15 @@ export class QueueProcessor {
         error instanceof Error && 'retryable' in error && error.retryable === true
       ) || /fetch failed|timed out|abort|network/i.test(message)
       if (retryLater) {
-        this.database.setTaskStatus(task.taskId, 'pending')
-        this.database.setWordStatus(task.wordId, 'pending')
+        const attempts = this.database.bumpTaskRetry(task.taskId)
+        if (attempts >= MAX_TASK_RETRIES) {
+          const exhausted = `重试 ${MAX_TASK_RETRIES} 次后仍失败：${message}`
+          this.database.setTaskStatus(task.taskId, 'failed', exhausted)
+          this.database.setWordFailure(task.wordId, exhausted)
+        } else {
+          this.database.setTaskStatus(task.taskId, 'pending')
+          this.database.setWordStatus(task.wordId, 'pending')
+        }
       } else {
         this.database.setTaskStatus(task.taskId, 'failed', message)
         this.database.setWordFailure(task.wordId, message)

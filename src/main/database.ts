@@ -214,6 +214,7 @@ export class AppDatabase {
         word_id TEXT NOT NULL UNIQUE REFERENCES words(id) ON DELETE CASCADE,
         status TEXT NOT NULL DEFAULT 'pending',
         priority INTEGER NOT NULL DEFAULT 100,
+        retry_count INTEGER NOT NULL DEFAULT 0,
         error TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -257,6 +258,9 @@ export class AppDatabase {
     const taskColumns = this.db.pragma('table_info(tasks)') as { name: string }[]
     if (!taskColumns.some((column) => column.name === 'priority')) {
       this.db.exec(`ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 100`)
+    }
+    if (!taskColumns.some((column) => column.name === 'retry_count')) {
+      this.db.exec(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`)
     }
 
     this.db
@@ -514,11 +518,17 @@ export class AppDatabase {
     this.db.prepare('UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?').run(status, error, now(), taskId)
   }
 
+  bumpTaskRetry(taskId: string): number {
+    this.db.prepare('UPDATE tasks SET retry_count = retry_count + 1, updated_at = ? WHERE id = ?').run(now(), taskId)
+    const row = this.db.prepare('SELECT retry_count FROM tasks WHERE id = ?').get(taskId) as { retry_count: number } | undefined
+    return row?.retry_count ?? 0
+  }
+
   retryTask(wordId: string): void {
     const task = this.db.prepare('SELECT id FROM tasks WHERE word_id = ?').get(wordId) as { id: string } | undefined
     if (task) {
       this.setTaskStatus(task.id, 'pending')
-      this.db.prepare(`UPDATE tasks SET priority = 100 WHERE id = ?`).run(task.id)
+      this.db.prepare(`UPDATE tasks SET priority = 100, retry_count = 0 WHERE id = ?`).run(task.id)
     } else {
       this.db.prepare('INSERT INTO tasks (id, word_id, status, priority, created_at, updated_at) VALUES (?, ?, ?, 100, ?, ?)').run(randomUUID(), wordId, 'pending', now(), now())
     }
@@ -531,7 +541,7 @@ export class AppDatabase {
     const transaction = this.db.transaction(() => {
       const findTask = this.db.prepare(`SELECT id FROM tasks WHERE word_id = ?`)
       const insertTask = this.db.prepare(`INSERT INTO tasks (id, word_id, status, priority, created_at, updated_at) VALUES (?, ?, 'pending', 0, ?, ?)`)
-      const updateTask = this.db.prepare(`UPDATE tasks SET status = 'pending', priority = 0, error = NULL, updated_at = ? WHERE word_id = ?`)
+      const updateTask = this.db.prepare(`UPDATE tasks SET status = 'pending', priority = 0, retry_count = 0, error = NULL, updated_at = ? WHERE word_id = ?`)
       for (const word of activeWords) {
         if (findTask.get(word.id)) updateTask.run(timestamp, word.id)
         else insertTask.run(randomUUID(), word.id, timestamp, timestamp)
@@ -566,8 +576,12 @@ export class AppDatabase {
           now(),
           wordId
         )
-      this.replaceSenses(wordId, result.senses)
-      this.replaceTags(wordId, result.tagNames)
+      // 已有义项说明内容来自人工编辑或上一轮 AI，重新分析只更新词素/IPA/分类，
+      // 不覆盖释义与标签，避免丢失用户数据。
+      if (!current?.senses.length) {
+        this.replaceSenses(wordId, result.senses)
+        this.replaceTags(wordId, result.tagNames)
+      }
     })
     transaction()
   }

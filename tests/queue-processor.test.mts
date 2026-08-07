@@ -154,6 +154,31 @@ test('retryable DeepSeek failures return the word to the pending queue', async (
   assert.deepEqual(processor.getStatus(), { pending: 1, processing: 0, failed: 0, paused: false })
 })
 
+test('exhausted retryable failures mark the word failed instead of retrying forever', async (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-deepseek-retry-limit-'))
+  const database = new AppDatabase(directory)
+  context.after(() => {
+    database.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const created = database.createWord('Exhausted')
+  const provider = {
+    id: 'deepseek',
+    check: async () => ({ available: true, models: ['deepseek-v4-flash'], message: 'ok' }),
+    enrich: async () => {
+      throw new DeepSeekApiError(429, 'DeepSeek 请求过于频繁，请稍后重试。', true)
+    }
+  }
+  const processor = new QueueProcessor(database, { get: () => provider }, () => undefined)
+
+  for (let round = 0; round < 10; round += 1) await processor.processNext()
+
+  const exhausted = database.getWord(created.entry.id)
+  assert.equal(exhausted?.status, 'failed')
+  assert.match(exhausted?.aiError ?? '', /重试 10 次后仍失败/)
+  assert.deepEqual(processor.getStatus(), { pending: 0, processing: 0, failed: 1, paused: false })
+})
+
 test('AI queue stores the reconciled morpheme chain with the enrichment', async (context) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-morpheme-queue-'))
   const database = new AppDatabase(directory)
