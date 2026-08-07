@@ -333,6 +333,8 @@ p { text-wrap: pretty; }
 .toast[data-state="closing"] { opacity: 0; pointer-events: none; transform: translateY(0.5rem); transition-duration: var(--duration-fast); }
 .toast.success { background: rgb(245 245 245 / 94%); color: var(--color-success); }
 .toast.error { background: rgb(44 44 44 / 94%); color: var(--white); }
+.toast-action { background: var(--button-primary-bg); border: none; border-radius: 999px; color: var(--color-on-action); cursor: pointer; font-size: 0.8rem; font-weight: 700; padding: 0.3rem 0.8rem; }
+.toast-action:hover { filter: brightness(1.08); }
 
 @starting-style {
   .dialog-backdrop { opacity: 0; }

@@ -39,6 +39,39 @@ test('createWord 保留专有名词大小写并与小写形式去重', (context)
   assert.equal(second.entry.id, first.entry.id)
 })
 
+test('存量词条迁移：规范化并合并撞键词条，幂等', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  fixture.database.close()
+
+  // 构造旧格式数据：先 Apple（含释义），后 apples（含释义）
+  const raw = new Database(path.join(fixture.directory, 'shengciben.sqlite'))
+  raw.prepare(`DELETE FROM settings WHERE key = '_wordNormalizationV1'`).run()
+  raw.prepare(`INSERT INTO words (id, word, normalized_word, category_id, enrichment_status, created_at, updated_at)
+    VALUES ('old-apple', 'Apple', 'apple', 'uncategorized', 'pending', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`).run()
+  raw.prepare(`INSERT INTO words (id, word, normalized_word, category_id, enrichment_status, created_at, updated_at)
+    VALUES ('old-apples', 'apples', 'apples', 'uncategorized', 'pending', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z')`).run()
+  raw.prepare(`INSERT INTO senses (id, word_id, part_of_speech, definition_zh, sort_order) VALUES ('s1', 'old-apple', 'noun', '苹果', 0)`).run()
+  raw.prepare(`INSERT INTO senses (id, word_id, part_of_speech, definition_zh, sort_order) VALUES ('s2', 'old-apples', 'noun', '复数苹果', 0)`).run()
+  raw.prepare(`INSERT INTO tags (id, name, created_at) VALUES ('t1', '水果', '2026-01-01T00:00:00.000Z')`).run()
+  raw.prepare(`INSERT INTO word_tags (word_id, tag_id) VALUES ('old-apples', 't1')`).run()
+  raw.close()
+
+  // 重新打开触发迁移
+  const migrated = new AppDatabase(fixture.directory)
+  const entries = migrated.listWords({})
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].word, 'apple')
+  assert.deepEqual(entries[0].senses.map((sense) => sense.definitionZh).sort(), ['复数苹果', '苹果'])
+  assert.deepEqual(entries[0].tags.map((tag) => tag.name), ['水果'])
+
+  // 幂等：再次打开不再变化
+  migrated.close()
+  const reopened = new AppDatabase(fixture.directory)
+  assert.equal(reopened.listWords({}).length, 1)
+  reopened.close()
+})
+
 test('manual save completes the AI task and marks the word ready', (context) => {
   const fixture = createDatabase()
   context.after(fixture.cleanup)

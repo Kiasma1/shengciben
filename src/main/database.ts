@@ -299,6 +299,47 @@ export class AppDatabase {
         this.db.prepare(`UPDATE words SET enrichment_status = 'pending', ai_error = NULL, morphology_version = 0, updated_at = ? WHERE is_deleted = 0`).run(now())
       }
     })()
+    this.migrateWordNormalization()
+  }
+
+  /**
+   * 存量词条规范化迁移：word 与 normalized_word 统一经 normalizeWordInput 规范化。
+   * 撞 UNIQUE 键时保留先创建词条，把后词条的释义/标签/词根合并过去后删除后词条。
+   * 用 settings 标记幂等，只跑一次。
+   */
+  private migrateWordNormalization(): void {
+    const marker = this.db.prepare(`SELECT value FROM settings WHERE key = '_wordNormalizationV1'`).get() as { value: string } | undefined
+    if (marker) return
+
+    const rows = this.db
+      .prepare(`SELECT id, word, normalized_word FROM words ORDER BY created_at ASC, id ASC`)
+      .all() as { id: string; word: string; normalized_word: string }[]
+
+    const findKeyOwner = this.db.prepare(`SELECT id FROM words WHERE normalized_word = ? AND id <> ?`)
+    const updateWord = this.db.prepare(`UPDATE words SET word = ?, normalized_word = ?, updated_at = ? WHERE id = ?`)
+    const moveSenses = this.db.prepare(`UPDATE senses SET word_id = ? WHERE word_id = ?`)
+    const moveTags = this.db.prepare(`INSERT OR IGNORE INTO word_tags (word_id, tag_id) SELECT ?, tag_id FROM word_tags WHERE word_id = ?`)
+    const moveRoots = this.db.prepare(`UPDATE root_matches SET word_id = ? WHERE word_id = ?`)
+    const deleteWord = this.db.prepare(`DELETE FROM words WHERE id = ?`)
+
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const normalized = normalizeWordInput(row.word)
+        const key = normalizeWord(normalized)
+        if (normalized === row.word && key === row.normalized_word) continue
+        const owner = findKeyOwner.get(key, row.id) as { id: string } | undefined
+        if (owner) {
+          // 先创建者保留，把当前词条的释义/标签/词根合并过去后删除
+          moveSenses.run(owner.id, row.id)
+          moveTags.run(owner.id, row.id)
+          moveRoots.run(owner.id, row.id)
+          deleteWord.run(row.id)
+        } else {
+          updateWord.run(normalized, key, now(), row.id)
+        }
+      }
+    })()
+    this.db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('_wordNormalizationV1', 'done')`).run()
   }
 
   listWords(filters: WordFilters = {}): WordEntry[] {
@@ -467,7 +508,8 @@ export class AppDatabase {
   }
 
   getSettings(): AppSettings {
-    const rows = this.db.prepare('SELECT key, value FROM settings').all() as { key: keyof AppSettings; value: string }[]
+    // 下划线前缀为内部迁移标记，不属于用户设置
+    const rows = this.db.prepare(`SELECT key, value FROM settings WHERE substr(key, 1, 1) <> '_'`).all() as { key: keyof AppSettings; value: string }[]
     const entries = rows.map((row) => [row.key, row.value])
     const settings = { ...DEFAULT_SETTINGS, ...Object.fromEntries(entries) } as AppSettings
     settings.deepseekApiKey = settings.deepseekApiKey ? this.secretCodec.decode(settings.deepseekApiKey) : ''

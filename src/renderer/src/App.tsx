@@ -40,7 +40,7 @@ import type {
 } from '../../shared/types'
 
 type CollectionView = 'active' | 'trash'
-type Toast = { kind: 'success' | 'error'; message: string } | null
+type Toast = { kind: 'success' | 'error'; message: string; action?: { label: string; onClick: () => void } } | null
 type ToastKind = 'success' | 'error'
 type MotionState = 'open' | 'closing'
 const CATEGORY_COLORS = ['#6e6e6e']
@@ -196,6 +196,13 @@ export default function App(): ReactElement {
     void window.api.app.version().then(setAppVersion)
   }, [])
 
+  useEffect(() => window.api.updates.onAvailable((version) => {
+    showToast('success', `新版本 v${version} 已就绪，重启即可完成更新。`, {
+      label: '重启更新',
+      onClick: () => window.api.updates.install()
+    })
+  }), [])
+
   useEffect(() => {
     setDetailDirty(false)
   }, [selectedId])
@@ -205,11 +212,12 @@ export default function App(): ReactElement {
     if (toastUnmountTimerRef.current !== null) window.clearTimeout(toastUnmountTimerRef.current)
   }, [])
 
-  const showToast = (kind: ToastKind, message: string): void => {
+  const showToast = (kind: ToastKind, message: string, action?: { label: string; onClick: () => void }): void => {
     if (toastCloseTimerRef.current !== null) window.clearTimeout(toastCloseTimerRef.current)
     if (toastUnmountTimerRef.current !== null) window.clearTimeout(toastUnmountTimerRef.current)
-    setToast({ kind, message })
+    setToast({ kind, message, action })
     setToastClosing(false)
+    if (action) return // 带操作按钮的提示常驻，等待用户操作
     toastCloseTimerRef.current = window.setTimeout(() => {
       setToastClosing(true)
       toastCloseTimerRef.current = null
@@ -406,7 +414,7 @@ export default function App(): ReactElement {
         onCreate={createCategory}
       />}
       {settingsPresence.rendered && <SettingsDialog motionState={settingsPresence.state} onClose={() => setSettingsOpen(false)} onToast={showToast} />}
-      {toast && <div className={`toast ${toast.kind}`} data-state={toastClosing ? 'closing' : 'open'} role="status" aria-live="polite">{toast.kind === 'error' ? <CircleAlert size={18} /> : <Check size={18} />}{toast.message}</div>}
+      {toast && <div className={`toast ${toast.kind}`} data-state={toastClosing ? 'closing' : 'open'} role="status" aria-live="polite">{toast.kind === 'error' ? <CircleAlert size={18} /> : <Check size={18} />}{toast.message}{toast.action && <button className="toast-action" onClick={toast.action.onClick}>{toast.action.label}</button>}</div>}
       </main>
     </div>
   )

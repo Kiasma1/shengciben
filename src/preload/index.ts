@@ -5,6 +5,14 @@ contextBridge.exposeInMainWorld('api', {
   app: {
     version: () => ipcRenderer.invoke('app:version')
   },
+  updates: {
+    install: () => ipcRenderer.send('update:install'),
+    onAvailable: (listener: (version: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, version: string): void => listener(version)
+      ipcRenderer.on('update:available', handler)
+      return () => ipcRenderer.removeListener('update:available', handler)
+    }
+  },
   window: {
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
     minimize: () => ipcRenderer.send('window:minimize'),

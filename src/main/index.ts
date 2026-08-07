@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import path from 'node:path'
 import { existsSync, mkdirSync, promises as fs, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { AiProviderRegistry } from './ai-provider'
@@ -142,6 +143,7 @@ function stopBackupSchedule(): void {
 
 function setupIpc(): void {
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.on('update:install', () => autoUpdater.quitAndInstall())
   ipcMain.handle('window:is-maximized', (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false)
   ipcMain.on('window:minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize())
   ipcMain.on('window:toggle-maximize', (event) => {
@@ -300,6 +302,16 @@ app.whenReady().then(async () => {
     // A missed backup must not block access to the user's wordbook.
   }
   startBackupSchedule()
+
+  // 静默检查更新：失败不打扰使用；下载完成后通知渲染进程提示重启安装
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.on('update-downloaded', (info) => {
+    windowRef?.webContents.send('update:available', info.version)
+  })
+  void autoUpdater.checkForUpdates().catch(() => {
+    // 更新检查失败静默处理（离线/网络问题不阻塞启动）
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -1,6 +1,6 @@
 {
   "name": "shengciben",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "DeepSeek AI 生词本",
   "main": "./out/main/index.js",
   "author": "",
@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.1",
+    "electron-updater": "6.8.9",
     "lucide-react": "^1.27.0",
     "pluralize": "^8.0.0",
     "react": "^19.2.8",
@@ -54,6 +55,13 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Kiasma1",
+        "repo": "shengciben"
+      }
+    ]
   }
 }

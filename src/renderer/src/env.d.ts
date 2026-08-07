@@ -20,6 +20,10 @@ declare global {
       app: {
         version: () => Promise<string>
       }
+      updates: {
+        install: () => void
+        onAvailable: (listener: (version: string) => void) => () => void
+      }
       window: {
         isMaximized: () => Promise<boolean>
         minimize: () => void
