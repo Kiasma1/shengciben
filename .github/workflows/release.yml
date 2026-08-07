@@ -18,13 +18,21 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build and publish
+      - name: Package installer
+        run: npm run build:win -- --publish never
+
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build:win -- --publish always
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.TrimStart('v')
+          gh release create "$tag" --title "生词本 $tag" --notes "自动发布" 2>$null
+          gh release upload "$tag" "release/shengciben-setup-$version.exe" "release/shengciben-setup-$version.exe.blockmap" "release/latest.yml" --clobber
