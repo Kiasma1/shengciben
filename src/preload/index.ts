@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('api', {
     save: (draft: WordDraft) => ipcRenderer.invoke('words:save', draft),
     trash: (id: string) => ipcRenderer.invoke('words:trash', id),
     restore: (id: string) => ipcRenderer.invoke('words:restore', id),
+    review: (id: string) => ipcRenderer.invoke('words:review', id),
     emptyTrash: () => ipcRenderer.invoke('words:empty-trash')
   },
   categories: {

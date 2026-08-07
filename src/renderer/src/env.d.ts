@@ -38,6 +38,7 @@ declare global {
         save: (draft: WordDraft) => Promise<WordEntry>
         trash: (id: string) => Promise<void>
         restore: (id: string) => Promise<void>
+        review: (id: string) => Promise<void>
         emptyTrash: () => Promise<number>
       }
       categories: {

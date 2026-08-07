@@ -83,7 +83,7 @@ export default function App(): ReactElement {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<EnrichmentStatus | 'all'>('all')
-  const [sort, setSort] = useState<'recent' | 'alphabetical'>('recent')
+  const [sort, setSort] = useState<'recent' | 'alphabetical' | 'due'>('due')
   const [collectionView, setCollectionView] = useState<CollectionView>('active')
   const [isLoading, setIsLoading] = useState(true)
   const [addOpen, setAddOpen] = useState(false)
@@ -207,6 +207,15 @@ export default function App(): ReactElement {
     setDetailDirty(false)
   }, [selectedId])
 
+  // 点开卡片详情即视为一次复习：只在用户主动点击时记录，同一卡片不重复记录
+  const reviewedIdRef = useRef<string | null>(null)
+  const selectWord = (id: string): void => {
+    setSelectedId(id)
+    if (reviewedIdRef.current === id) return
+    reviewedIdRef.current = id
+    void window.api.words.review(id).then(() => void load())
+  }
+
   useEffect(() => () => {
     if (toastCloseTimerRef.current !== null) window.clearTimeout(toastCloseTimerRef.current)
     if (toastUnmountTimerRef.current !== null) window.clearTimeout(toastUnmountTimerRef.current)
@@ -326,8 +335,8 @@ export default function App(): ReactElement {
               <option value="ready">已完成</option>
               <option value="failed">处理失败</option>
             </select>
-            <button className="text-button" onClick={() => setSort((value) => (value === 'recent' ? 'alphabetical' : 'recent'))} aria-label={`当前按${sort === 'recent' ? '最近更新' : '字母顺序'}排列，点击切换`}>
-              {sort === 'recent' ? '最近更新' : 'A–Z'}
+            <button className="text-button" onClick={() => setSort((value) => (value === 'recent' ? 'alphabetical' : value === 'alphabetical' ? 'due' : 'recent'))} aria-label={`当前按${sort === 'recent' ? '最近更新' : sort === 'alphabetical' ? '字母顺序' : '记忆曲线'}排列，点击切换`}>
+              {sort === 'recent' ? '最近更新' : sort === 'alphabetical' ? 'A–Z' : '记忆曲线'}
             </button>
           </div>
         </header>
@@ -338,7 +347,7 @@ export default function App(): ReactElement {
         </div>
 
         <div className="word-list" aria-busy={isLoading}>
-          {isLoading ? <ListLoading /> : entries.length ? entries.map((entry) => <WordRow key={entry.id} entry={entry} selected={entry.id === selected?.id} onClick={() => setSelectedId(entry.id)} />) : <ListEmpty view={collectionView} query={query} />}
+          {isLoading ? <ListLoading /> : entries.length ? entries.map((entry) => <WordRow key={entry.id} entry={entry} selected={entry.id === selected?.id} onClick={() => selectWord(entry.id)} />) : <ListEmpty view={collectionView} query={query} />}
         </div>
       </section>
 
@@ -498,8 +507,16 @@ function Sidebar({
 
 function WordRow({ entry, selected, onClick }: { entry: WordEntry; selected: boolean; onClick: () => void }): ReactElement {
   const definition = entry.senses[0]?.definitionZh || (entry.status === 'pending' ? '等待 AI 补全…' : '尚未填写释义')
+  const reviewTone = ((): string => {
+    if (!entry.nextReviewAt) return 'due' // 从未复习：最紧迫
+    const nowMs = Date.now()
+    const nextMs = Date.parse(entry.nextReviewAt)
+    if (nowMs >= nextMs) return 'due' // 已到期
+    const soonWindow = Math.max(86400000, (nextMs - Date.parse(entry.lastReviewedAt ?? entry.createdAt)) * 0.5) // 宽限期一半内即将到期
+    return nowMs >= nextMs - soonWindow ? 'soon' : 'fresh'
+  })()
   return (
-    <button className={`word-row ${selected ? 'selected' : ''}`} onClick={onClick} aria-pressed={selected}>
+    <button className={`word-row ${reviewTone} ${selected ? 'selected' : ''}`} onClick={onClick} aria-pressed={selected}>
       <span className="word-row-main"><strong lang="en" title={entry.word}>{entry.word}</strong><em lang="en">{entry.ipaUk ? `/${entry.ipaUk.replace(/^\/+|\/+$/g, '')}/` : '—'}</em></span>
       <span className="word-row-definition" title={definition}>{definition}</span>
       <span className="word-row-footer"><StatusBadge status={entry.status} /><span className="row-category"><i style={{ background: entry.categoryColor }} />{entry.categoryName}</span></span>

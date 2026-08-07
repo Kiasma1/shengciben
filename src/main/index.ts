@@ -176,6 +176,10 @@ function setupIpc(): void {
     database.restoreWord(id)
     notifyChanged()
   })
+  ipcMain.handle('words:review', (_event, id: string) => {
+    database.recordReview(id)
+    notifyChanged()
+  })
   ipcMain.handle('words:empty-trash', () => {
     const deletedCount = database.emptyTrash()
     notifyChanged()

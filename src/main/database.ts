@@ -54,6 +54,9 @@ type WordRow = {
   is_deleted: number
   created_at: string
   updated_at: string
+  last_reviewed_at: string | null
+  review_count: number
+  next_review_at: string | null
 }
 
 const now = (): string => new Date().toISOString()
@@ -255,6 +258,16 @@ export class AppDatabase {
     if (needsMorphologyBackfill) {
       this.db.exec(`ALTER TABLE words ADD COLUMN morphology_version INTEGER NOT NULL DEFAULT 0`)
     }
+    const reviewColumns = this.db.pragma('table_info(words)') as { name: string }[]
+    if (!reviewColumns.some((column) => column.name === 'last_reviewed_at')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN last_reviewed_at TEXT`)
+    }
+    if (!reviewColumns.some((column) => column.name === 'review_count')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN review_count INTEGER NOT NULL DEFAULT 0`)
+    }
+    if (!reviewColumns.some((column) => column.name === 'next_review_at')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN next_review_at TEXT`)
+    }
     const taskColumns = this.db.pragma('table_info(tasks)') as { name: string }[]
     if (!taskColumns.some((column) => column.name === 'priority')) {
       this.db.exec(`ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 100`)
@@ -366,7 +379,11 @@ export class AppDatabase {
       )`)
     }
 
-    const order = filters.sort === 'alphabetical' ? 'w.normalized_word ASC' : 'w.updated_at DESC'
+    const order = filters.sort === 'alphabetical'
+      ? 'w.normalized_word ASC'
+      : filters.sort === 'due'
+        ? 'w.next_review_at IS NULL DESC, w.next_review_at ASC, w.created_at ASC'
+        : 'w.updated_at DESC'
     const rows = this.db
       .prepare(`
         SELECT w.*, c.name AS category_name, c.color AS category_color
@@ -465,6 +482,33 @@ export class AppDatabase {
 
   restoreWord(id: string): void {
     this.db.prepare(`UPDATE words SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE id = ?`).run(now(), id)
+  }
+
+  // 简化记忆曲线间隔（天）：首次 1，按时翻倍，逾期重置，封顶 30
+  recordReview(id: string): void {
+    const row = this.db
+      .prepare(`SELECT last_reviewed_at, review_count, next_review_at FROM words WHERE id = ?`)
+      .get(id) as { last_reviewed_at: string | null; review_count: number; next_review_at: string | null } | undefined
+    if (!row) return
+    const timestamp = now()
+    let intervalDays = 1
+    if (row.next_review_at && row.review_count > 0) {
+      const nowMs = Date.parse(timestamp)
+      const nextMs = Date.parse(row.next_review_at)
+      const lastMs = Date.parse(row.last_reviewed_at ?? timestamp)
+      const lastIntervalDays = Math.max(1, Math.round((nextMs - lastMs) / 86400000))
+      if (nowMs >= nextMs) {
+        // 按时或逾期：逾期超过一个间隔（宽限期）则重置，否则翻倍
+        intervalDays = nowMs > nextMs + lastIntervalDays * 86400000 ? 1 : Math.min(30, lastIntervalDays * 2)
+      } else {
+        // 提前点开：只刷新上次复习时间，不推进间隔
+        intervalDays = lastIntervalDays
+      }
+    }
+    const nextReview = new Date(Date.parse(timestamp) + intervalDays * 86400000).toISOString()
+    this.db
+      .prepare(`UPDATE words SET last_reviewed_at = ?, review_count = review_count + 1, next_review_at = ?, updated_at = ? WHERE id = ?`)
+      .run(timestamp, nextReview, timestamp, id)
   }
 
   emptyTrash(): number {
@@ -728,7 +772,10 @@ export class AppDatabase {
       aiError: row.ai_error,
       isDeleted: Boolean(row.is_deleted),
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
+      lastReviewedAt: row.last_reviewed_at,
+      reviewCount: row.review_count,
+      nextReviewAt: row.next_review_at
     }
   }
 }

@@ -60,13 +60,16 @@ export interface WordEntry {
   isDeleted: boolean
   createdAt: string
   updatedAt: string
+  lastReviewedAt: string | null
+  reviewCount: number
+  nextReviewAt: string | null
 }
 
 export interface WordFilters {
   query?: string
   categoryId?: string | null
   status?: EnrichmentStatus | 'all'
-  sort?: 'recent' | 'alphabetical'
+  sort?: 'recent' | 'alphabetical' | 'due'
   includeDeleted?: boolean
 }
 

@@ -215,6 +215,9 @@ p { text-wrap: pretty; }
 .word-list { display: grid; gap: 0.2rem; min-height: 0; overflow: auto; padding: 0 var(--space-2) var(--space-4); scrollbar-gutter: stable; }
 .word-row { background: transparent; border: 1px solid transparent; border-radius: var(--radius-md); color: var(--color-text); display: grid; gap: var(--space-2); padding: var(--space-3); text-align: left; transition: background var(--transition-instant), border-color var(--transition-instant), box-shadow var(--transition-instant), transform var(--transition-instant); }
 .word-row:hover { background: var(--color-surface-hover); }
+.word-row.due { box-shadow: inset 3px 0 0 rgb(198 72 55 / 78%); }
+.word-row.soon { box-shadow: inset 3px 0 0 rgb(214 138 44 / 74%); }
+.word-row.fresh { box-shadow: inset 3px 0 0 rgb(76 138 82 / 52%); }
 .word-row.selected { background: var(--color-surface-selected); border-color: rgb(28 28 28 / 17%); box-shadow: inset 3px 0 0 var(--color-action); }
 .word-row-main { align-items: baseline; display: flex; gap: var(--space-2); min-width: 0; }
 .word-row-main strong { font-family: var(--font-latin); font-size: 1.05rem; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
