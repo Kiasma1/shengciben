@@ -1,6 +1,6 @@
 # 生词本
 
-`v2.2.1` · Windows · Electron · React · TypeScript · SQLite · 内置 Local AI
+`v2.2.2` · Windows · Electron · React · TypeScript · SQLite · 内置 Local AI
 
 生词本是一款本地优先的英语词汇管理桌面应用。它把收藏、编辑、分类、独立复习和词素分析集中在一个简洁的 Windows 桌面界面中；词库保存在本机，内置 Local AI 负责基础释义，DeepSeek 和本地词根辞典均为可选增强。
 
@@ -24,7 +24,7 @@
 项目当前发布 Windows NSIS 安装包。
 
 1. 打开 [GitHub Releases](https://github.com/Kiasma1/shengciben/releases)。
-2. 下载 `shengciben-setup-2.2.1.exe`。
+2. 下载 Latest Release 中的 `shengciben-setup-x.y.z.exe`。
 3. 运行安装程序并选择安装目录。
 
 卸载应用不会主动删除词库数据。
@@ -46,9 +46,9 @@ npm run dev
 npm run build:win
 ```
 
-安装包生成在 `release/` 目录，文件名为 `shengciben-setup-2.2.1.exe`。安装包会把模型和 llama-server 放在外部 `resources/local-ai/`，不放进 `app.asar`。
+安装包生成在 `release/` 目录，当前文件名为 `shengciben-setup-2.2.2.exe`。安装包会把模型和 llama-server 放在外部 `resources/local-ai/`，不放进 `app.asar`。
 
-正式 GitHub Release 强制要求 Authenticode 代码签名。仓库需要配置 `WINDOWS_CERTIFICATE_BASE64`（Base64 编码的 PFX）和 `WINDOWS_CERTIFICATE_PASSWORD` 两个 Actions Secrets；缺失证书或签名状态不是 `Valid` 时，发布任务会停止。开发者本机仍可生成仅供测试的未签名安装包。
+GitHub Release 支持可选的 Authenticode 代码签名。配置 `WINDOWS_CERTIFICATE_BASE64`（Base64 编码的 PFX）和 `WINDOWS_CERTIFICATE_PASSWORD` 后，流水线会签名并验证安装包；没有证书时仍会发布未签名安装包，并在发布说明中明确提示 SmartScreen 或“未知发布者”警告。发版前会依次运行自动测试、生产依赖安全审计和 TypeScript 构建。
 
 ## 使用
 
@@ -106,10 +106,17 @@ Review Mode 的队列包含全部到期词，以及每日上限允许加入的�
 - 复习当前状态保存在 `words` 表，评分历史保存在 `review_events` 表；删除词条时历史记录级联删除。
 - 应用启动后每小时检查一次当日备份，最多保留最近 7 个 `.sqlite` 文件。
 - 可从设置导出 JSON、带 BOM 的 CSV 或完整 SQLite 备份；JSON/SQLite 保留 `entryType`、`phraseType`、`phraseComponents`、`phraseExplanation` 和 AI 来源，CSV 提供对应字段。
+- 可从“设置 → 数据与备份 → 恢复 SQLite”恢复完整备份。应用会先检查备份完整性和生词本表结构，保存当前词库快照，再重启替换；新数据库无法打开时会自动回滚。
 - Local AI：词汇数据只在本机处理，不会发送到网络。
 - DeepSeek：仅在用户配置并启用 DeepSeek 增强时，发送必要的当前词汇内容、条目类型和现有分类名。
 - AI 来源会保存在条目中并在详情显示；Phrase 使用本地 fallback 时显示“本地基础解析 · 建议核对”。
 - 现有数据库会在启动时自动迁移；复习历史表的迁移幂等，不会重置已有复习状态。
+
+## Phrase 盲测
+
+Qwen3-0.6B 使用 50 条不在 Prompt 和 safety set 中的 Phrase 完成了固定盲测。结果为：整体意义正确 18%、基本可用 28%、机械直译 26%、明显错误 28%；正确与基本可用合计 46%，未达到 90% 通过线。因此 0.6B 只作为 Phrase 的降级候选，不作为可信首选，也不会把失败样例补进 safety set。
+
+评测集、原始模型输出、逐条人工评分和哈希见 [`evaluations/phrase-blind-v1-report.md`](evaluations/phrase-blind-v1-report.md)。
 
 ## 项目结构
 
@@ -131,7 +138,14 @@ build/         应用图标与构建时 Local AI 资源缓存
 ```powershell
 npm run typecheck
 npm test
+npm audit --omit=dev --audit-level=high
 npm run build
+```
+
+本机已准备 Local AI 资源时，可以复现 50 条 Phrase 盲测；CPU 推理约需 10–15 分钟，脚本支持断点续跑：
+
+```powershell
+npm run eval:phrases:blind
 ```
 
 使用本地辞典执行词根随机审计：

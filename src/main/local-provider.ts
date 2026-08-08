@@ -59,7 +59,7 @@ const LOCAL_PHRASE_HINTS: Record<string, Pick<AiEnrichment, 'phraseType' | 'phra
   "don't give up": { phraseType: 'expression', senses: [{ partOfSpeech: 'expression', definitionZh: '不要放弃' }], phraseComponents: [{ text: "don't", meaningZh: '不要' }, { text: 'give', meaningZh: '给予；放下' }, { text: 'up', meaningZh: '向上；彻底' }], phraseExplanation: '用于鼓励某人坚持下去，不要放弃。' }
 }
 
-const localPhraseHint = (word: string): Pick<AiEnrichment, 'phraseType' | 'phraseComponents' | 'phraseExplanation' | 'senses'> | null => LOCAL_PHRASE_HINTS[word.toLocaleLowerCase('en-US')] ?? null
+export const localPhraseHint = (word: string): Pick<AiEnrichment, 'phraseType' | 'phraseComponents' | 'phraseExplanation' | 'senses'> | null => LOCAL_PHRASE_HINTS[word.toLocaleLowerCase('en-US')] ?? null
 
 export const parseLocalEnrichment = (input: { word: string; entryType: EntryType; content: string }): AiEnrichment => {
   let parsedJson: unknown

@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   data: {
     openFolder: () => ipcRenderer.invoke('data:open-folder'),
+    restore: () => ipcRenderer.invoke('data:restore'),
     export: (format: ExportFormat) => ipcRenderer.invoke('data:export', format)
   },
   onWordsChanged: (listener: () => void) => {

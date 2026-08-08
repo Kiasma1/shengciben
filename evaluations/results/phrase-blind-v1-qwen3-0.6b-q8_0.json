@@ -1,0 +1,1638 @@
+{
+  "evaluation": "phrase-blind-v1",
+  "model": "Qwen3-0.6B-Q8_0",
+  "generatedAt": "2026-08-08T15:18:26.410Z",
+  "datasetSha256": "32c7c59ba326d0abe6915d809f5457f0fe818fc1b72be97f9c9bebca9f2c3290",
+  "promptSha256": "ae1df25397fe1ba1798997c88d1fe48a1375debc1761104fbc34f404587a15a7",
+  "promptIncludedReferences": false,
+  "results": [
+    {
+      "id": 1,
+      "phrase": "check in on",
+      "referenceMeaningZh": "去看看某人或询问其近况",
+      "durationMs": 8465,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "noun phrase",
+            "definitionZh": "检查入院，即在医院或病房中进行检查或入院的活动。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "noun phrase",
+        "phraseComponents": [
+          {
+            "text": "on",
+            "meaningZh": "在..."
+          }
+        ],
+        "phraseExplanation": "检查入院，即在医院或病房中进行检查或入院的活动。"
+      }
+    },
+    {
+      "id": 2,
+      "phrase": "rule out",
+      "referenceMeaningZh": "排除某种可能性",
+      "durationMs": 7058,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "verb",
+            "definitionZh": "排除（排除事物或可能性）"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "verb",
+        "phraseComponents": [
+          {
+            "text": "rule",
+            "meaningZh": "排除"
+          },
+          {
+            "text": "out",
+            "meaningZh": "出去"
+          }
+        ],
+        "phraseExplanation": "排除（排除事物或可能性）"
+      }
+    },
+    {
+      "id": 3,
+      "phrase": "come across",
+      "referenceMeaningZh": "偶然遇见或发现",
+      "durationMs": 6856,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "come across 表示遇到或在某处相遇"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "come",
+            "meaningZh": "遇到"
+          },
+          {
+            "text": "across",
+            "meaningZh": "在...之间"
+          }
+        ],
+        "phraseExplanation": "come across 表示遇到或在某处相遇"
+      }
+    },
+    {
+      "id": 4,
+      "phrase": "hold off",
+      "referenceMeaningZh": "推迟或暂缓",
+      "durationMs": 7246,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "保持沉默或不说话"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "hold",
+            "meaningZh": "保持"
+          },
+          {
+            "text": "off",
+            "meaningZh": "不"
+          }
+        ],
+        "phraseExplanation": "保持沉默或不说话"
+      }
+    },
+    {
+      "id": 5,
+      "phrase": "pull through",
+      "referenceMeaningZh": "渡过难关或康复",
+      "durationMs": 8072,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "pull through 表示拉穿过某物或某区域。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "pull",
+            "meaningZh": "拉"
+          },
+          {
+            "text": "through",
+            "meaningZh": "穿过"
+          }
+        ],
+        "phraseExplanation": "pull through 表示拉穿过某物或某区域。"
+      }
+    },
+    {
+      "id": 6,
+      "phrase": "turn someone down",
+      "referenceMeaningZh": "拒绝某人或其请求",
+      "durationMs": 8832,
+      "error": "本地 AI 没有返回有效中文释义。"
+    },
+    {
+      "id": 7,
+      "phrase": "give someone a heads-up",
+      "referenceMeaningZh": "提前提醒某人",
+      "durationMs": 9074,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "expression",
+            "definitionZh": "给某人一个提示或警报"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "expression",
+        "phraseComponents": [
+          {
+            "text": "give",
+            "meaningZh": "给予"
+          },
+          {
+            "text": "someone",
+            "meaningZh": "某人"
+          },
+          {
+            "text": "a",
+            "meaningZh": "一个"
+          },
+          {
+            "text": "heads-up",
+            "meaningZh": "提示"
+          }
+        ],
+        "phraseExplanation": "给某人一个提示或警报"
+      }
+    },
+    {
+      "id": 8,
+      "phrase": "keep someone posted",
+      "referenceMeaningZh": "随时向某人通报最新情况",
+      "durationMs": 9500,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "expression",
+            "definitionZh": "保持某人通知，即通知某人当前的情况或信息。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "expression",
+        "phraseComponents": [
+          {
+            "text": "keep",
+            "meaningZh": "保持"
+          },
+          {
+            "text": "someone",
+            "meaningZh": "某人"
+          },
+          {
+            "text": "posted",
+            "meaningZh": "通知"
+          }
+        ],
+        "phraseExplanation": "保持某人通知，即通知某人当前的情况或信息。"
+      }
+    },
+    {
+      "id": 9,
+      "phrase": "in no time",
+      "referenceMeaningZh": "很快，立即",
+      "durationMs": 10006,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "expression",
+            "definitionZh": "in no time 表示‘在没有时间’，即‘在短时间内完成某事’。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "expression",
+        "phraseComponents": [
+          {
+            "text": "in",
+            "meaningZh": "在"
+          },
+          {
+            "text": "no",
+            "meaningZh": "没有"
+          },
+          {
+            "text": "time",
+            "meaningZh": "时间"
+          }
+        ],
+        "phraseExplanation": "in no time 表示‘在没有时间’，即‘在短时间内完成某事’。"
+      }
+    },
+    {
+      "id": 10,
+      "phrase": "under the weather",
+      "referenceMeaningZh": "身体不舒服",
+      "durationMs": 10541,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "adjective phrase",
+            "definitionZh": "under the weather 指某人或某事物处于不适或不健康的状态，通常指天气不佳或身体不适的情况。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "adjective phrase",
+        "phraseComponents": [
+          {
+            "text": "under",
+            "meaningZh": "处于不适或不健康的状态"
+          },
+          {
+            "text": "the",
+            "meaningZh": "某事物"
+          },
+          {
+            "text": "weather",
+            "meaningZh": "天气"
+          }
+        ],
+        "phraseExplanation": "under the weather 指某人或某事物处于不适或不健康的状态，通常指天气不佳或身体不适的情况。"
+      }
+    },
+    {
+      "id": 11,
+      "phrase": "cut corners",
+      "referenceMeaningZh": "偷工减料或走捷径省事",
+      "durationMs": 8473,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "cut corners 表示在做事时忽视原则或道德，以达到目的。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "cut",
+            "meaningZh": "切"
+          },
+          {
+            "text": "corners",
+            "meaningZh": "角落"
+          }
+        ],
+        "phraseExplanation": "cut corners 表示在做事时忽视原则或道德，以达到目的。"
+      }
+    },
+    {
+      "id": 12,
+      "phrase": "hit the nail on the head",
+      "referenceMeaningZh": "说得完全正确或一针见血",
+      "durationMs": 12090,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "hit the nail on the head 的意思是‘击中钉子’，即抓住关键点或正确答案。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "hit",
+            "meaningZh": "击中"
+          },
+          {
+            "text": "the",
+            "meaningZh": "那个"
+          },
+          {
+            "text": "nail",
+            "meaningZh": "钉子"
+          },
+          {
+            "text": "on",
+            "meaningZh": "在"
+          }
+        ],
+        "phraseExplanation": "hit the nail on the head 的意思是‘击中钉子’，即抓住关键点或正确答案。"
+      }
+    },
+    {
+      "id": 13,
+      "phrase": "call it a day",
+      "referenceMeaningZh": "今天到此为止，收工",
+      "durationMs": 10024,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "请求结束或结束一天"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "call",
+            "meaningZh": "请求结束或结束"
+          },
+          {
+            "text": "it",
+            "meaningZh": "它"
+          },
+          {
+            "text": "day",
+            "meaningZh": "一天"
+          }
+        ],
+        "phraseExplanation": "请求结束或结束一天"
+      }
+    },
+    {
+      "id": 14,
+      "phrase": "go out of one's way",
+      "referenceMeaningZh": "特意费心或格外努力",
+      "durationMs": 7833,
+      "error": "本地 AI 没有返回有效中文释义。"
+    },
+    {
+      "id": 15,
+      "phrase": "get the hang of",
+      "referenceMeaningZh": "逐渐掌握窍门",
+      "durationMs": 6924,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "掌握"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "get",
+            "meaningZh": "获取"
+          },
+          {
+            "text": "the",
+            "meaningZh": "那个"
+          },
+          {
+            "text": "hang",
+            "meaningZh": "掌握"
+          }
+        ],
+        "phraseExplanation": "掌握"
+      }
+    },
+    {
+      "id": 16,
+      "phrase": "at stake",
+      "referenceMeaningZh": "处于风险中，成败攸关",
+      "durationMs": 9331,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "at stake 表示在某个方面或关键性问题上处于关键地位或有重要影响。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "at",
+            "meaningZh": "在...方面"
+          },
+          {
+            "text": "stake",
+            "meaningZh": "关键性"
+          }
+        ],
+        "phraseExplanation": "at stake 表示在某个方面或关键性问题上处于关键地位或有重要影响。"
+      }
+    },
+    {
+      "id": 17,
+      "phrase": "in the long run",
+      "referenceMeaningZh": "从长远来看",
+      "durationMs": 8680,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "in the long run 表示在长期的未来或长期的计划中。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "in",
+            "meaningZh": "在"
+          },
+          {
+            "text": "the",
+            "meaningZh": "的"
+          },
+          {
+            "text": "long",
+            "meaningZh": "长期"
+          },
+          {
+            "text": "run",
+            "meaningZh": "运行"
+          }
+        ],
+        "phraseExplanation": "in the long run 表示在长期的未来或长期的计划中。"
+      }
+    },
+    {
+      "id": 18,
+      "phrase": "on the verge of",
+      "referenceMeaningZh": "濒临或即将发生",
+      "durationMs": 8456,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "on the verge of 表示接近临界点，通常用于描述接近某个状态或目标的临近状态。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "on",
+            "meaningZh": "在...上"
+          },
+          {
+            "text": "the",
+            "meaningZh": "这个"
+          },
+          {
+            "text": "verge",
+            "meaningZh": "接近临界点"
+          }
+        ],
+        "phraseExplanation": "on the verge of 表示接近临界点，通常用于描述接近某个状态或目标的临近状态。"
+      }
+    },
+    {
+      "id": 19,
+      "phrase": "by all means",
+      "referenceMeaningZh": "当然可以；务必",
+      "durationMs": 9214,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "by all means 表示通过所有方法或手段来达到目的。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "by",
+            "meaningZh": "通过"
+          },
+          {
+            "text": "all",
+            "meaningZh": "全部"
+          },
+          {
+            "text": "means",
+            "meaningZh": "方法"
+          }
+        ],
+        "phraseExplanation": "by all means 表示通过所有方法或手段来达到目的。"
+      }
+    },
+    {
+      "id": 20,
+      "phrase": "for good",
+      "referenceMeaningZh": "永久地，一去不返地",
+      "durationMs": 8549,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "for good 表示‘用于正面的’，通常用于描述某物或某人是好的或有益的。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "for",
+            "meaningZh": "用于、用于"
+          },
+          {
+            "text": "good",
+            "meaningZh": "正面的、有益的"
+          }
+        ],
+        "phraseExplanation": "for good 表示‘用于正面的’，通常用于描述某物或某人是好的或有益的。"
+      }
+    },
+    {
+      "id": 21,
+      "phrase": "break the ice",
+      "referenceMeaningZh": "打破陌生或紧张气氛",
+      "durationMs": 10686,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "打破冰，即打破隔阂或障碍，以促进交流。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "break",
+            "meaningZh": "打破"
+          },
+          {
+            "text": "the",
+            "meaningZh": "the"
+          },
+          {
+            "text": "ice",
+            "meaningZh": "冰"
+          }
+        ],
+        "phraseExplanation": "打破冰，即打破隔阂或障碍，以促进交流。"
+      }
+    },
+    {
+      "id": 22,
+      "phrase": "get cold feet",
+      "referenceMeaningZh": "临阵退缩或突然害怕",
+      "durationMs": 7779,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "get cold feet 意思是感到冷"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "get",
+            "meaningZh": "获取"
+          },
+          {
+            "text": "cold",
+            "meaningZh": "冷"
+          },
+          {
+            "text": "feet",
+            "meaningZh": "脚"
+          }
+        ],
+        "phraseExplanation": "get cold feet 意思是感到冷"
+      }
+    },
+    {
+      "id": 23,
+      "phrase": "miss the boat",
+      "referenceMeaningZh": "错过机会",
+      "durationMs": 9387,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "miss the boat 意思是错过船"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "miss",
+            "meaningZh": "错过"
+          },
+          {
+            "text": "the",
+            "meaningZh": "the"
+          },
+          {
+            "text": "boat",
+            "meaningZh": "船"
+          }
+        ],
+        "phraseExplanation": "miss the boat 意思是错过船"
+      }
+    },
+    {
+      "id": 24,
+      "phrase": "be tied up",
+      "referenceMeaningZh": "正忙得脱不开身",
+      "durationMs": 7865,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "expression",
+            "definitionZh": "被绑"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "expression",
+        "phraseComponents": [
+          {
+            "text": "be",
+            "meaningZh": "被"
+          },
+          {
+            "text": "tied",
+            "meaningZh": "被绑"
+          },
+          {
+            "text": "up",
+            "meaningZh": "上"
+          }
+        ],
+        "phraseExplanation": "被绑"
+      }
+    },
+    {
+      "id": 25,
+      "phrase": "make up one's mind",
+      "referenceMeaningZh": "下定决心",
+      "durationMs": 9791,
+      "error": "本地 AI 没有返回有效中文释义。"
+    },
+    {
+      "id": 26,
+      "phrase": "take something for granted",
+      "referenceMeaningZh": "认为某事理所当然",
+      "durationMs": 12940,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "expression",
+            "definitionZh": "take something for granted 是指认为某物已经得到认可或接受，而实际上并不需要或没有实际意义。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "expression",
+        "phraseComponents": [
+          {
+            "text": "take",
+            "meaningZh": "接受"
+          },
+          {
+            "text": "something",
+            "meaningZh": "某物"
+          },
+          {
+            "text": "for",
+            "meaningZh": "对于"
+          },
+          {
+            "text": "granted",
+            "meaningZh": "被接受"
+          }
+        ],
+        "phraseExplanation": "take something for granted 是指认为某物已经得到认可或接受，而实际上并不需要或没有实际意义。"
+      }
+    },
+    {
+      "id": 27,
+      "phrase": "play it by ear",
+      "referenceMeaningZh": "见机行事，随机应变",
+      "durationMs": 17483,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "expression",
+            "definitionZh": "演奏音乐，通过耳朵听"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "expression",
+        "phraseComponents": [
+          {
+            "text": "play",
+            "meaningZh": "演奏"
+          },
+          {
+            "text": "it",
+            "meaningZh": "它"
+          },
+          {
+            "text": "by",
+            "meaningZh": "通过"
+          },
+          {
+            "text": "ear",
+            "meaningZh": "耳朵"
+          }
+        ],
+        "phraseExplanation": "演奏音乐，通过耳朵听"
+      }
+    },
+    {
+      "id": 28,
+      "phrase": "be on the same page",
+      "referenceMeaningZh": "意见一致或理解相同",
+      "durationMs": 18947,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "处于相同页面"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "be",
+            "meaningZh": "处于"
+          },
+          {
+            "text": "on",
+            "meaningZh": "在"
+          },
+          {
+            "text": "the",
+            "meaningZh": "那个"
+          },
+          {
+            "text": "same",
+            "meaningZh": "相同"
+          },
+          {
+            "text": "page",
+            "meaningZh": "页面"
+          }
+        ],
+        "phraseExplanation": "处于相同页面"
+      }
+    },
+    {
+      "id": 29,
+      "phrase": "get away with",
+      "referenceMeaningZh": "做坏事后逃脱惩罚",
+      "durationMs": 21352,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "逃过惩罚"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "get",
+            "meaningZh": "逃跑"
+          },
+          {
+            "text": "away",
+            "meaningZh": "远离"
+          },
+          {
+            "text": "with",
+            "meaningZh": "与"
+          }
+        ],
+        "phraseExplanation": "逃过惩罚"
+      }
+    },
+    {
+      "id": 30,
+      "phrase": "put up with",
+      "referenceMeaningZh": "忍受或容忍",
+      "durationMs": 25801,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrases",
+            "definitionZh": "put up with 表示‘与某人或某事配合’，通常用于表达愿意接受或配合某人或某事。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrases",
+        "phraseComponents": [
+          {
+            "text": "with",
+            "meaningZh": "与"
+          }
+        ],
+        "phraseExplanation": "put up with 表示‘与某人或某事配合’，通常用于表达愿意接受或配合某人或某事。"
+      }
+    },
+    {
+      "id": 31,
+      "phrase": "bring something up",
+      "referenceMeaningZh": "提出某个话题",
+      "durationMs": 27694,
+      "error": "本地 AI 没有返回有效中文释义。"
+    },
+    {
+      "id": 32,
+      "phrase": "back someone up",
+      "referenceMeaningZh": "支持某人或为其作证",
+      "durationMs": 22668,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "back someone up 表示帮助某人向上或支持某人。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "back",
+            "meaningZh": "支持、帮助"
+          },
+          {
+            "text": "someone",
+            "meaningZh": "某人"
+          },
+          {
+            "text": "up",
+            "meaningZh": "向上"
+          }
+        ],
+        "phraseExplanation": "back someone up 表示帮助某人向上或支持某人。"
+      }
+    },
+    {
+      "id": 33,
+      "phrase": "run out of",
+      "referenceMeaningZh": "用完或耗尽",
+      "durationMs": 15609,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "耗尽"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "of",
+            "meaningZh": "的"
+          }
+        ],
+        "phraseExplanation": "耗尽"
+      }
+    },
+    {
+      "id": 34,
+      "phrase": "look forward to",
+      "referenceMeaningZh": "期待",
+      "durationMs": 21847,
+      "error": "本地 AI 没有返回有效中文释义。"
+    },
+    {
+      "id": 35,
+      "phrase": "make ends meet",
+      "referenceMeaningZh": "使收支相抵，勉强维持生活",
+      "durationMs": 21351,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "make ends meet 意思是使目标得以满足，即努力达到目标，不求回报。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "make",
+            "meaningZh": "使……满足"
+          },
+          {
+            "text": "ends",
+            "meaningZh": "目标"
+          },
+          {
+            "text": "meet",
+            "meaningZh": "满足"
+          }
+        ],
+        "phraseExplanation": "make ends meet 意思是使目标得以满足，即努力达到目标，不求回报。"
+      }
+    },
+    {
+      "id": 36,
+      "phrase": "keep one's word",
+      "referenceMeaningZh": "遵守诺言",
+      "durationMs": 19671,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "保持承诺，守诺自己的承诺。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "keep",
+            "meaningZh": "守诺"
+          },
+          {
+            "text": "one's",
+            "meaningZh": "自己的"
+          },
+          {
+            "text": "word",
+            "meaningZh": "承诺"
+          }
+        ],
+        "phraseExplanation": "保持承诺，守诺自己的承诺。"
+      }
+    },
+    {
+      "id": 37,
+      "phrase": "have second thoughts",
+      "referenceMeaningZh": "重新考虑或产生动摇",
+      "durationMs": 19584,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "expression",
+            "definitionZh": "有第二想法"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "expression",
+        "phraseComponents": [
+          {
+            "text": "have",
+            "meaningZh": "有"
+          },
+          {
+            "text": "second",
+            "meaningZh": "第二"
+          },
+          {
+            "text": "thoughts",
+            "meaningZh": "想法"
+          }
+        ],
+        "phraseExplanation": "有第二想法"
+      }
+    },
+    {
+      "id": 38,
+      "phrase": "go the extra mile",
+      "referenceMeaningZh": "付出额外努力",
+      "durationMs": 29179,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "go the extra mile 意思是‘做额外的努力’，即为某事付出额外的代价或努力。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "go",
+            "meaningZh": "做某事"
+          },
+          {
+            "text": "the",
+            "meaningZh": "某事物"
+          },
+          {
+            "text": "extra",
+            "meaningZh": "额外的"
+          },
+          {
+            "text": "mile",
+            "meaningZh": "里程"
+          }
+        ],
+        "phraseExplanation": "go the extra mile 意思是‘做额外的努力’，即为某事付出额外的代价或努力。"
+      }
+    },
+    {
+      "id": 39,
+      "phrase": "be in hot water",
+      "referenceMeaningZh": "陷入麻烦",
+      "durationMs": 22580,
+      "error": "本地 AI 没有返回有效中文释义。"
+    },
+    {
+      "id": 40,
+      "phrase": "take a rain check",
+      "referenceMeaningZh": "这次婉拒并改日接受",
+      "durationMs": 19630,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "expression",
+            "definitionZh": "take a rain check 表示在雨天中确认对方的承诺或关系，通常用于表达对某事的确认或接受。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "expression",
+        "phraseComponents": [
+          {
+            "text": "take",
+            "meaningZh": "接受"
+          },
+          {
+            "text": "rain",
+            "meaningZh": "雨"
+          },
+          {
+            "text": "check",
+            "meaningZh": "确认"
+          }
+        ],
+        "phraseExplanation": "take a rain check 表示在雨天中确认对方的承诺或关系，通常用于表达对某事的确认或接受。"
+      }
+    },
+    {
+      "id": 41,
+      "phrase": "bend over backwards",
+      "referenceMeaningZh": "竭尽全力，格外迁就",
+      "durationMs": 16833,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "verb phrase",
+            "definitionZh": "弯腰倒着"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "verb phrase",
+        "phraseComponents": [
+          {
+            "text": "backwards",
+            "meaningZh": "倒着"
+          }
+        ],
+        "phraseExplanation": "弯腰倒着"
+      }
+    },
+    {
+      "id": 42,
+      "phrase": "read between the lines",
+      "referenceMeaningZh": "理解言外之意",
+      "durationMs": 24901,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "读取中间的线，通常指在文本中寻找隐藏的线索或信息。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "read",
+            "meaningZh": "阅读"
+          },
+          {
+            "text": "between",
+            "meaningZh": "中间"
+          },
+          {
+            "text": "the",
+            "meaningZh": "的"
+          },
+          {
+            "text": "lines",
+            "meaningZh": "线"
+          }
+        ],
+        "phraseExplanation": "读取中间的线，通常指在文本中寻找隐藏的线索或信息。"
+      }
+    },
+    {
+      "id": 43,
+      "phrase": "get something off one's chest",
+      "referenceMeaningZh": "把心事说出来以释怀",
+      "durationMs": 28490,
+      "error": "本地 AI 返回的短语释义不完整。"
+    },
+    {
+      "id": 44,
+      "phrase": "leave no stone unturned",
+      "referenceMeaningZh": "想尽一切办法，不遗余力",
+      "durationMs": 24206,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "留下未被处理的石头，即努力完成所有工作。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "leave",
+            "meaningZh": "留下"
+          },
+          {
+            "text": "no",
+            "meaningZh": "没有"
+          },
+          {
+            "text": "stone",
+            "meaningZh": "石头"
+          },
+          {
+            "text": "unturned",
+            "meaningZh": "未被处理"
+          }
+        ],
+        "phraseExplanation": "留下未被处理的石头，即努力完成所有工作。"
+      }
+    },
+    {
+      "id": 45,
+      "phrase": "be in the dark",
+      "referenceMeaningZh": "被蒙在鼓里，不知情",
+      "durationMs": 19538,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "adverb",
+            "definitionZh": "处于黑暗中"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "adverb",
+        "phraseComponents": [
+          {
+            "text": "dark",
+            "meaningZh": "黑暗"
+          },
+          {
+            "text": "in",
+            "meaningZh": "处于"
+          },
+          {
+            "text": "the",
+            "meaningZh": "the"
+          }
+        ],
+        "phraseExplanation": "处于黑暗中"
+      }
+    },
+    {
+      "id": 46,
+      "phrase": "take something with a grain of salt",
+      "referenceMeaningZh": "对某事持保留态度，不全信",
+      "durationMs": 22579,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "take something with a grain of salt 意思是取某物时带着盐粒，比喻取舍或谨慎的态度。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "take",
+            "meaningZh": "取"
+          },
+          {
+            "text": "something",
+            "meaningZh": "某物"
+          },
+          {
+            "text": "with",
+            "meaningZh": "与"
+          }
+        ],
+        "phraseExplanation": "take something with a grain of salt 意思是取某物时带着盐粒，比喻取舍或谨慎的态度。"
+      }
+    },
+    {
+      "id": 47,
+      "phrase": "lose track of time",
+      "referenceMeaningZh": "忘记时间，不知不觉过了很久",
+      "durationMs": 19670,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "失去时间的注意力，即注意力被时间所分散或失去。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "lose",
+            "meaningZh": "失去"
+          },
+          {
+            "text": "track",
+            "meaningZh": "跟踪"
+          },
+          {
+            "text": "of",
+            "meaningZh": "的"
+          },
+          {
+            "text": "time",
+            "meaningZh": "时间"
+          }
+        ],
+        "phraseExplanation": "失去时间的注意力，即注意力被时间所分散或失去。"
+      }
+    },
+    {
+      "id": 48,
+      "phrase": "face the music",
+      "referenceMeaningZh": "承担行为造成的后果",
+      "durationMs": 15651,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "面对音乐，指面对音乐本身，即面对艺术或表演的表演。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "face",
+            "meaningZh": "面对"
+          },
+          {
+            "text": "the",
+            "meaningZh": "the"
+          },
+          {
+            "text": "music",
+            "meaningZh": "音乐"
+          }
+        ],
+        "phraseExplanation": "面对音乐，指面对音乐本身，即面对艺术或表演的表演。"
+      }
+    },
+    {
+      "id": 49,
+      "phrase": "pull someone's leg",
+      "referenceMeaningZh": "开某人的玩笑或逗弄某人",
+      "durationMs": 15975,
+      "output": {
+        "source": "local",
+        "entryType": "phrase",
+        "usageNote": "",
+        "ipaUk": "",
+        "senses": [
+          {
+            "partOfSpeech": "phrase",
+            "definitionZh": "pull someone's leg 意思是拉某人的腿。"
+          }
+        ],
+        "suggestedCategory": null,
+        "tagNames": [],
+        "morphemes": [],
+        "formationSummary": "",
+        "phraseType": "phrase",
+        "phraseComponents": [
+          {
+            "text": "pull",
+            "meaningZh": "拉"
+          }
+        ],
+        "phraseExplanation": "pull someone's leg 意思是拉某人的腿。"
+      }
+    },
+    {
+      "id": 50,
+      "phrase": "come in handy",
+      "referenceMeaningZh": "派上用场",
+      "durationMs": 8416,
+      "error": "本地 AI 没有返回有效中文释义。"
+    }
+  ]
+}

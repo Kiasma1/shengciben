@@ -388,6 +388,22 @@ function setupIpc(): void {
     await shell.openExternal(`file:///${source.replace(/\\/g, '/')}#${encodeURIComponent(anchor)}`)
   })
   ipcMain.handle('data:open-folder', () => shell.openPath(database.directory))
+  ipcMain.handle('data:restore', async () => {
+    const options: OpenDialogOptions = {
+      title: '选择生词本 SQLite 备份',
+      properties: ['openFile'],
+      filters: [{ name: 'SQLite 数据库', extensions: ['sqlite', 'db'] }]
+    }
+    const result = windowRef ? await dialog.showOpenDialog(windowRef, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || !result.filePaths[0]) return false
+
+    await database.stageRestore(result.filePaths[0])
+    setImmediate(() => {
+      app.relaunch()
+      app.quit()
+    })
+    return true
+  })
   ipcMain.handle('data:export', async (_event, format: ExportFormat = 'sqlite') => {
     const exportOptions: Record<ExportFormat, { title: string; defaultPath: string; filterName: string; extension: string }> = {
       sqlite: { title: '导出生词本数据库备份', defaultPath: 'shengciben-backup.sqlite', filterName: 'SQLite 数据库', extension: 'sqlite' },
@@ -430,7 +446,47 @@ app.whenReady().then(async () => {
   const userDataDirectory = app.getPath('userData')
   const dataProtection = hardenUserDataDirectory(userDataDirectory)
   if (process.platform === 'win32' && !dataProtection.applied) console.warn(dataProtection.message)
-  database = new AppDatabase(userDataDirectory, secretCodec)
+  const restoreWasPending = AppDatabase.hasPendingRestore(userDataDirectory)
+  let appliedRestore: ReturnType<typeof AppDatabase.applyPendingRestore> = null
+  let restoreNotice: 'success' | 'failed' | null = null
+  if (restoreWasPending) {
+    try {
+      appliedRestore = AppDatabase.applyPendingRestore(userDataDirectory)
+    } catch (error) {
+      console.error('数据库恢复文件无法应用，继续使用原词库：', error)
+      try {
+        AppDatabase.discardPendingRestore(userDataDirectory)
+      } catch (cleanupError) {
+        console.warn('无法清理待恢复文件：', cleanupError)
+      }
+    }
+
+    if (appliedRestore) {
+      try {
+        database = new AppDatabase(userDataDirectory, secretCodec)
+        restoreNotice = 'success'
+      } catch (error) {
+        console.error('恢复后的数据库无法打开，正在回滚：', error)
+        AppDatabase.rollbackPendingRestore(appliedRestore)
+        database = new AppDatabase(userDataDirectory, secretCodec)
+        restoreNotice = 'failed'
+      }
+
+      if (restoreNotice === 'success') {
+        try {
+          AppDatabase.commitPendingRestore(appliedRestore)
+        } catch (error) {
+          // The restored database is already open and usable. Cleanup failure must not trigger a destructive rollback.
+          console.warn('数据库恢复成功，但旧回滚文件暂时无法清理：', error)
+        }
+      }
+    } else {
+      database = new AppDatabase(userDataDirectory, secretCodec)
+      restoreNotice = 'failed'
+    }
+  } else {
+    database = new AppDatabase(userDataDirectory, secretCodec)
+  }
   rootIndexer = new RootIndexer(database.directory)
   localAi = new LocalAiService({
     resourceContext: {
@@ -453,6 +509,15 @@ app.whenReady().then(async () => {
   )
   setupIpc()
   createWindow()
+  if (restoreNotice) {
+    void dialog.showMessageBox(windowRef!, {
+      type: restoreNotice === 'success' ? 'info' : 'error',
+      title: restoreNotice === 'success' ? '备份恢复完成' : '备份恢复失败',
+      message: restoreNotice === 'success'
+        ? '词库已经从 SQLite 备份恢复；恢复前的数据快照保存在 backups 文件夹。'
+        : '所选备份未能安全恢复，应用已自动回滚到原词库。'
+    })
+  }
   setupTray()
   if (!globalShortcut.register('CommandOrControl+Shift+Alt+W', showQuickCapture)) {
     console.error('全局快捷键 Ctrl+Shift+Alt+W 注册失败，可能已被其他应用占用。')
@@ -496,4 +561,5 @@ app.on('before-quit', () => {
   localAi?.stop()
   processor?.stop()
   stopBackupSchedule()
+  database?.close()
 })
