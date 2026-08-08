@@ -13,7 +13,8 @@ interface BlindPhraseCase {
 }
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const datasetContent = readFileSync(path.join(repositoryRoot, 'evaluations', 'phrase-blind-v1.json'), 'utf8')
+const canonicalText = (value: string): string => value.replace(/\r\n/g, '\n')
+const datasetContent = canonicalText(readFileSync(path.join(repositoryRoot, 'evaluations', 'phrase-blind-v1.json'), 'utf8'))
 const dataset = JSON.parse(datasetContent) as BlindPhraseCase[]
 
 test('phrase blind evaluation contains 50 unique cases outside the prompt and safety set', () => {
@@ -26,7 +27,7 @@ test('phrase blind evaluation contains 50 unique cases outside the prompt and sa
 })
 
 test('phrase blind scores cover the frozen raw results exactly once', () => {
-  const rawResultContent = readFileSync(path.join(repositoryRoot, 'evaluations', 'results', 'phrase-blind-v1-qwen3-0.6b-q8_0.json'), 'utf8')
+  const rawResultContent = canonicalText(readFileSync(path.join(repositoryRoot, 'evaluations', 'results', 'phrase-blind-v1-qwen3-0.6b-q8_0.json'), 'utf8'))
   const rawResults = JSON.parse(rawResultContent) as {
     datasetSha256: string
     promptSha256: string
