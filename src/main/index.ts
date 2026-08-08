@@ -4,11 +4,11 @@ import path from 'node:path'
 import { existsSync, mkdirSync, promises as fs, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { AiProviderRegistry } from './ai-provider'
 import { wordsToCsv } from './data-export'
-import { AppDatabase, type SecretCodec } from './database'
+import { AppDatabase, normalizeDailyNewLimit, type SecretCodec } from './database'
 import { DeepSeekProvider } from './deepseek'
 import { QueueProcessor } from './queue-processor'
 import { RootIndexer } from './root-indexer'
-import type { AppSettings, AppSettingsView, ExportFormat, WordDraft, WordFilters } from '../shared/types'
+import type { AppSettings, AppSettingsView, ExportFormat, ReviewRating, WordDraft, WordFilters } from '../shared/types'
 
 let windowRef: BrowserWindow | null = null
 let database: AppDatabase
@@ -39,7 +39,8 @@ const toSettingsView = (settings: AppSettings): AppSettingsView => ({
   deepseekApiKey: '',
   hasDeepseekApiKey: Boolean(settings.deepseekApiKey),
   clearDeepseekApiKey: false,
-  dictionaryPath: settings.dictionaryPath
+  dictionaryPath: settings.dictionaryPath,
+  dailyNewLimit: settings.dailyNewLimit
 })
 const mergeSettingsView = (view: AppSettingsView): AppSettings => {
   const current = database.getSettings()
@@ -48,7 +49,8 @@ const mergeSettingsView = (view: AppSettingsView): AppSettings => {
     deepseekApiUrl: view.deepseekApiUrl.trim(),
     deepseekModel: view.deepseekModel.trim() || 'deepseek-v4-flash',
     deepseekApiKey: view.clearDeepseekApiKey ? '' : view.deepseekApiKey.trim() || current.deepseekApiKey,
-    dictionaryPath: view.dictionaryPath.trim()
+    dictionaryPath: view.dictionaryPath.trim(),
+    dailyNewLimit: normalizeDailyNewLimit(view.dailyNewLimit)
   }
 }
 
@@ -176,9 +178,12 @@ function setupIpc(): void {
     database.restoreWord(id)
     notifyChanged()
   })
-  ipcMain.handle('words:review', (_event, id: string) => {
-    database.recordReview(id)
+  ipcMain.handle('reviews:overview', () => database.getReviewOverview())
+  ipcMain.handle('reviews:queue', () => database.getReviewQueue())
+  ipcMain.handle('reviews:grade', (_event, id: string, rating: ReviewRating) => {
+    const result = database.gradeReview(id, rating)
     notifyChanged()
+    return result
   })
   ipcMain.handle('words:empty-trash', () => {
     const deletedCount = database.emptyTrash()

@@ -309,6 +309,43 @@ p { text-wrap: pretty; }
 .empty-emblem { -webkit-backdrop-filter: var(--material-glass-regular); align-items: center; backdrop-filter: var(--material-glass-regular); background: var(--glass-regular); border: 1px solid var(--glass-border); border-radius: 1.25rem; box-shadow: var(--shadow-control); color: var(--color-accent); display: flex; height: 4rem; justify-content: center; width: 4rem; }
 .trashed-detail { min-height: 25rem; }
 
+.app-shell.reviewing { grid-template-columns: minmax(0, 1fr); }
+.review-mode { background: var(--color-surface); border: 1px solid var(--glass-border); border-radius: var(--panel-radius); box-shadow: var(--shadow-subtle); display: flex; flex-direction: column; gap: var(--space-5); grid-column: 1 / -1; min-width: 0; overflow: auto; padding: clamp(var(--space-5), 4vw, var(--space-10)); position: relative; }
+.review-mode:focus { outline: none; }
+.review-header { align-items: flex-start; display: flex; justify-content: space-between; }
+.review-exit { align-items: center; background: transparent; border-radius: 999px; color: var(--color-text-muted); display: inline-flex; font-weight: 680; gap: var(--space-2); min-height: var(--control-height); padding: 0 var(--space-3); }
+.review-exit:hover { background: var(--color-surface-hover); color: var(--color-text); }
+.review-progress-copy { display: grid; gap: var(--space-1); justify-items: end; text-align: right; }
+.review-progress-copy strong { font-family: var(--font-latin); font-size: var(--text-md); }
+.review-progress-copy span { color: var(--color-text-faint); font-size: var(--text-xs); }
+.review-progress-track { background: var(--color-surface-selected); border-radius: 999px; height: 0.25rem; overflow: hidden; }
+.review-progress-track span { background: var(--color-action); border-radius: inherit; display: block; height: 100%; transition: width var(--transition-fast); }
+.review-card { align-items: center; display: flex; flex: 1; flex-direction: column; gap: var(--space-5); justify-content: center; margin: 0 auto; max-width: 52rem; padding: var(--space-8) 0; text-align: center; width: 100%; }
+.review-card > h1 { font-family: var(--font-latin); font-size: clamp(2.4rem, 8vw, 5.5rem); font-weight: 760; letter-spacing: -0.06em; line-height: 1; }
+.review-reveal { margin-top: var(--space-5); min-width: 10rem; }
+.review-reveal span { color: rgb(255 255 255 / 68%); font-family: var(--font-latin); font-size: var(--text-xs); font-weight: 550; }
+.review-answer { display: grid; gap: var(--space-5); max-width: 42rem; text-align: left; width: 100%; }
+.review-ipa { color: var(--color-text-muted); font-family: var(--font-latin); font-size: var(--text-lg); text-align: center; }
+.review-senses { display: grid; gap: var(--space-2); }
+.review-senses p { align-items: baseline; display: grid; gap: var(--space-4); grid-template-columns: 5rem 1fr; }
+.review-senses strong { color: var(--color-text-muted); font-family: var(--font-latin); font-size: var(--text-sm); text-align: right; }
+.review-senses span, .review-formation > p:last-child { font-family: var(--font-reading); line-height: var(--line-body); }
+.review-formation, .review-roots { border-top: 1px solid var(--color-border); display: grid; gap: var(--space-2); padding-top: var(--space-4); }
+.review-rating-section { display: grid; gap: var(--space-3); max-width: 42rem; width: 100%; }
+.review-rating-grid { display: grid; gap: var(--space-2); grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.review-rating-button { background: var(--glass-regular); border: 1px solid var(--glass-border); border-radius: var(--button-radius); box-shadow: var(--shadow-control); color: var(--color-text); display: grid; gap: var(--space-2); min-height: 4.25rem; padding: var(--space-3); text-align: left; transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-instant); }
+.review-rating-button:hover:not(:disabled) { background: var(--white); border-color: var(--color-border-strong); transform: translateY(-1px); }
+.review-rating-button > span { align-items: center; display: flex; font-weight: 720; gap: var(--space-2); }
+.review-rating-button b { align-items: center; background: var(--color-surface-selected); border-radius: 999px; display: inline-flex; font-family: var(--font-latin); font-size: var(--text-xs); height: 1.35rem; justify-content: center; width: 1.35rem; }
+.review-rating-button small { color: var(--color-text-faint); font-size: var(--text-xs); padding-left: 1.85rem; }
+.review-complete { align-items: center; display: grid; gap: var(--space-4); justify-items: center; margin: auto; max-width: 30rem; text-align: center; }
+.review-complete h1 { font-family: var(--font-reading); font-size: clamp(1.6rem, 4vw, 2.5rem); }
+.review-summary { display: grid; grid-template-columns: repeat(4, 1fr); width: 100%; }
+.review-summary span { border-right: 1px solid var(--color-border); color: var(--color-text-muted); display: grid; gap: var(--space-1); font-size: var(--text-sm); }
+.review-summary span:last-child { border-right: 0; }
+.review-summary b { color: var(--color-text); font-family: var(--font-latin); font-size: var(--text-lg); }
+.setting-hint { color: var(--color-text-faint); font-size: var(--text-xs); }
+
 .dialog-backdrop { align-items: center; background: var(--overlay-strong); display: flex; inset: 0; justify-content: center; opacity: 1; padding: var(--space-5); position: fixed; transition: opacity var(--duration-standard) var(--ease-out-fluid); z-index: var(--z-dialog); }
 .dialog { -webkit-backdrop-filter: var(--material-glass-thick); backdrop-filter: var(--material-glass-thick); background: var(--color-popover); border: 1px solid var(--glass-border); border-radius: var(--radius-xl); box-shadow: var(--shadow-raised), inset 0 1px 0 var(--glass-edge); display: grid; gap: var(--space-5); max-width: 29rem; opacity: 1; padding: var(--space-6); transform: scale(1); transition: border-radius var(--duration-standard) var(--ease-out-fluid), opacity var(--duration-standard) var(--ease-out-fluid), transform var(--duration-standard) var(--ease-out-fluid); width: 100%; }
 .dialog-backdrop[data-state="closing"] { opacity: 0; pointer-events: none; transition-duration: var(--duration-fast); }

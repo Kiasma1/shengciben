@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from 'react'
 import {
   ArchiveRestore,
+  ArrowLeft,
   BookOpen,
   Check,
   CircleAlert,
@@ -8,6 +9,7 @@ import {
   ExternalLink,
   FileDown,
   FolderPlus,
+  GraduationCap,
   LoaderCircle,
   Maximize2,
   Minus,
@@ -31,6 +33,9 @@ import type {
   ExportFormat,
   MorphemeKind,
   QueueStatus,
+  ReviewOverview,
+  ReviewQueueResult,
+  ReviewRating,
   RootMatch,
   RootIndexStatus,
   WordCreateResult,
@@ -43,6 +48,9 @@ type CollectionView = 'active' | 'trash'
 type Toast = { kind: 'success' | 'error'; message: string; action?: { label: string; onClick: () => void } } | null
 type ToastKind = 'success' | 'error'
 type MotionState = 'open' | 'closing'
+type ReviewCounts = Record<ReviewRating, number>
+const EMPTY_REVIEW_OVERVIEW: ReviewOverview = { dueCount: 0, newCount: 0, todayReviewed: 0, todayNewReviewed: 0, dailyNewLimit: 20 }
+const EMPTY_REVIEW_COUNTS: ReviewCounts = { again: 0, hard: 0, good: 0, easy: 0 }
 const CATEGORY_COLORS = ['#6e6e6e']
 
 const statusCopy: Record<EnrichmentStatus, string> = {
@@ -95,6 +103,13 @@ export default function App(): ReactElement {
   const [toast, setToast] = useState<Toast>(null)
   const [toastClosing, setToastClosing] = useState(false)
   const [queueStatus, setQueueStatus] = useState<QueueStatus>({ pending: 0, processing: 0, failed: 0, paused: false })
+  const [reviewOverview, setReviewOverview] = useState<ReviewOverview>(EMPTY_REVIEW_OVERVIEW)
+  const [reviewQueue, setReviewQueue] = useState<ReviewQueueResult | null>(null)
+  const [reviewIndex, setReviewIndex] = useState(0)
+  const [reviewRevealed, setReviewRevealed] = useState(false)
+  const [reviewGrading, setReviewGrading] = useState(false)
+  const reviewGradingRef = useRef(false)
+  const [reviewCounts, setReviewCounts] = useState<ReviewCounts>(EMPTY_REVIEW_COUNTS)
   const searchRef = useRef<HTMLInputElement>(null)
   const toastCloseTimerRef = useRef<number | null>(null)
   const toastUnmountTimerRef = useRef<number | null>(null)
@@ -118,14 +133,16 @@ export default function App(): ReactElement {
 
   const load = async (): Promise<void> => {
     try {
-      const [nextEntries, nextCategories, nextQueueStatus] = await Promise.all([
+      const [nextEntries, nextCategories, nextQueueStatus, nextReviewOverview] = await Promise.all([
         window.api.words.list(filters),
         window.api.categories.list(),
-        window.api.queue.status()
+        window.api.queue.status(),
+        window.api.reviews.overview()
       ])
       setEntries(nextEntries)
       setCategories(nextCategories)
       setQueueStatus(nextQueueStatus)
+      setReviewOverview(nextReviewOverview)
       setSelectedId((current) => (current && nextEntries.some((entry) => entry.id === current) ? current : nextEntries[0]?.id ?? null))
     } catch (error) {
       showToast('error', messageOf(error))
@@ -145,7 +162,7 @@ export default function App(): ReactElement {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent): void => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+      if (reviewQueue || !(event.ctrlKey || event.metaKey) || event.altKey) return
       if (document.querySelector('[role="dialog"]')) return
       if (event.key.toLocaleLowerCase('en-US') === 'k') {
         event.preventDefault()
@@ -157,7 +174,7 @@ export default function App(): ReactElement {
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [])
+  }, [reviewQueue])
 
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
@@ -207,13 +224,8 @@ export default function App(): ReactElement {
     setDetailDirty(false)
   }, [selectedId])
 
-  // 点开卡片详情即视为一次复习：只在用户主动点击时记录，同一卡片不重复记录
-  const reviewedIdRef = useRef<string | null>(null)
   const selectWord = (id: string): void => {
     setSelectedId(id)
-    if (reviewedIdRef.current === id) return
-    reviewedIdRef.current = id
-    void window.api.words.review(id).then(() => void load())
   }
 
   useEffect(() => () => {
@@ -268,6 +280,57 @@ export default function App(): ReactElement {
     }
   }
 
+  const startReview = async (): Promise<void> => {
+    try {
+      const queue = await window.api.reviews.queue()
+      if (!queue.items.length) {
+        showToast('success', '今日已完成，没有可复习的单词。')
+        return
+      }
+      setReviewQueue(queue)
+      setReviewIndex(0)
+      setReviewRevealed(false)
+      setReviewGrading(false)
+      setReviewCounts({ ...EMPTY_REVIEW_COUNTS })
+    } catch (error) {
+      showToast('error', messageOf(error))
+    }
+  }
+
+  const finishReview = (): void => {
+    setReviewQueue(null)
+    setReviewIndex(0)
+    setReviewRevealed(false)
+    setReviewGrading(false)
+    reviewGradingRef.current = false
+    setReviewCounts({ ...EMPTY_REVIEW_COUNTS })
+    void load()
+  }
+
+  const exitReview = (): void => {
+    if (reviewQueue && reviewIndex > 0 && !window.confirm(`退出本次复习？\n\n已经完成的 ${reviewIndex} 个单词会保留记录，剩余单词可以稍后继续复习。`)) return
+    finishReview()
+  }
+
+  const gradeReview = async (rating: ReviewRating): Promise<void> => {
+    const item = reviewQueue?.items[reviewIndex]
+    if (!item || !reviewRevealed || reviewGrading || reviewGradingRef.current) return
+    reviewGradingRef.current = true
+    setReviewGrading(true)
+    try {
+      await window.api.reviews.grade(item.entry.id, rating)
+      setReviewCounts((current) => ({ ...current, [rating]: current[rating] + 1 }))
+      setReviewIndex((current) => current + 1)
+      setReviewRevealed(false)
+      await load()
+    } catch (error) {
+      showToast('error', messageOf(error))
+    } finally {
+      reviewGradingRef.current = false
+      setReviewGrading(false)
+    }
+  }
+
   const emptyTrash = async (): Promise<void> => {
     if (!window.confirm('永久删除回收站中的全部单词？释义、标签关系、词根匹配和 AI 任务也会一并删除，且无法撤销。')) return
     try {
@@ -292,13 +355,28 @@ export default function App(): ReactElement {
         onToggleMaximize={() => window.api.window.toggleMaximize()}
         onClose={closeWindow}
       />
-      <main className="app-shell">
+      <main className={`app-shell ${reviewQueue ? 'reviewing' : ''}`}>
+      {reviewQueue ? (
+        <ReviewMode
+          queue={reviewQueue}
+          index={reviewIndex}
+          revealed={reviewRevealed}
+          grading={reviewGrading}
+          counts={reviewCounts}
+          onExit={exitReview}
+          onReveal={() => setReviewRevealed(true)}
+          onGrade={(rating) => void gradeReview(rating)}
+          onDone={finishReview}
+        />
+      ) : <>
       <a className="skip-link" href="#word-list">跳到单词列表</a>
       <a className="skip-link" href="#word-detail">跳到单词详情</a>
       <Sidebar
         categories={categories}
         selectedCategoryId={selectedCategoryId}
         collectionView={collectionView}
+        reviewOverview={reviewOverview}
+        onStartReview={() => void startReview()}
         onSelectCategory={(id) => {
           setCollectionView('active')
           setSelectedCategoryId(id)
@@ -402,7 +480,9 @@ export default function App(): ReactElement {
           )}
         </div>
       </section>
+      </>}
 
+      {!reviewQueue && <>
       {addPresence.rendered && <AddWordDialog
         motionState={addPresence.state}
         onClose={() => setAddOpen(false)}
@@ -423,10 +503,120 @@ export default function App(): ReactElement {
         onCreate={createCategory}
       />}
       {settingsPresence.rendered && <SettingsDialog motionState={settingsPresence.state} onClose={() => setSettingsOpen(false)} onToast={showToast} />}
+      </>}
       {toast && <div className={`toast ${toast.kind}`} data-state={toastClosing ? 'closing' : 'open'} role="status" aria-live="polite">{toast.kind === 'error' ? <CircleAlert size={18} /> : <Check size={18} />}{toast.message}{toast.action && <button className="toast-action" onClick={toast.action.onClick}>{toast.action.label}</button>}</div>}
       </main>
     </div>
   )
+}
+
+function ReviewMode({ queue, index, revealed, grading, counts, onExit, onReveal, onGrade, onDone }: {
+  queue: ReviewQueueResult
+  index: number
+  revealed: boolean
+  grading: boolean
+  counts: ReviewCounts
+  onExit: () => void
+  onReveal: () => void
+  onGrade: (rating: ReviewRating) => void
+  onDone: () => void
+}): ReactElement {
+  const reviewRef = useRef<HTMLElement>(null)
+  const item = queue.items[index]
+  const complete = !item
+
+  useEffect(() => {
+    reviewRef.current?.focus({ preventScroll: true })
+  }, [])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.repeat) return
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onExit()
+        return
+      }
+      if (event.code === 'Space' && !revealed) {
+        event.preventDefault()
+        onReveal()
+        return
+      }
+      if (!revealed || grading) return
+      const rating = ({ '1': 'again', '2': 'hard', '3': 'good', '4': 'easy' } as Record<string, ReviewRating | undefined>)[event.key]
+      if (!rating) return
+      event.preventDefault()
+      onGrade(rating)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [grading, onExit, onGrade, onReveal, revealed])
+
+  const total = queue.items.length
+  const progress = complete ? 100 : (index / total) * 100
+  return (
+    <section ref={reviewRef} className="review-mode" aria-label="复习模式" tabIndex={-1}>
+      <header className="review-header">
+        <button className="review-exit" onClick={onExit}><ArrowLeft size={17} />退出复习</button>
+        <div className="review-progress-copy"><strong>{complete ? total : index + 1} / {total}</strong><span>{queue.dueCount} 到期 · {queue.newCount} 新词</span></div>
+      </header>
+      <div className="review-progress-track" aria-hidden="true"><span style={{ width: `${progress}%` }} /></div>
+      {complete ? (
+        <ReviewComplete counts={counts} total={total} onDone={onDone} />
+      ) : (
+        <div className="review-card">
+          <p className="eyebrow">英文单词</p>
+          <h1 lang="en">{item.entry.word}</h1>
+          {!revealed ? (
+            <button className="primary-button review-reveal" onClick={onReveal}>显示答案 <span>Space</span></button>
+          ) : (
+            <>
+              <ReviewAnswer entry={item.entry} />
+              <div className="review-rating-section">
+                <p className="eyebrow">评分并安排下次复习</p>
+                <div className="review-rating-grid">
+                  {(['again', 'hard', 'good', 'easy'] as ReviewRating[]).map((rating, ratingIndex) => (
+                    <button key={rating} className="review-rating-button" disabled={grading} onClick={() => onGrade(rating)}>
+                      <span><b>{ratingIndex + 1}</b>{reviewRatingCopy[rating]}</span>
+                      <small>{formatReviewInterval(item.intervals[rating])}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+const reviewRatingCopy: Record<ReviewRating, string> = { again: '忘记', hard: '困难', good: '记得', easy: '简单' }
+
+function formatReviewInterval(minutes: number): string {
+  if (minutes < 60) return `${minutes} 分钟`
+  if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} 天`
+  if (minutes % 60 === 0) return `${minutes / 60} 小时`
+  return `${minutes} 分钟`
+}
+
+function ReviewAnswer({ entry }: { entry: WordEntry }): ReactElement {
+  return <div className="review-answer">
+    {entry.ipaUk && <p className="review-ipa" lang="en">/{entry.ipaUk.replace(/^\/+|\/+$/g, '')}/</p>}
+    <div className="review-senses">{entry.senses.filter((sense) => sense.partOfSpeech.trim() && sense.definitionZh.trim()).map((sense, index) => <p key={`${sense.partOfSpeech}-${index}`}><strong lang="en">{sense.partOfSpeech}</strong><span>{sense.definitionZh}</span></p>)}</div>
+    {entry.formationSummary && <section className="review-formation"><p className="eyebrow">构词</p><p>{entry.formationSummary}</p></section>}
+    {entry.rootMatches.length > 0 && <section className="review-roots"><p className="eyebrow">词素</p><div className="root-grid">{entry.rootMatches.map((match) => <MorphemeCard key={`${match.root}-${match.sourceAnchor}-${match.sortOrder}`} match={match} />)}</div></section>}
+  </div>
+}
+
+function ReviewComplete({ counts, total, onDone }: { counts: ReviewCounts; total: number; onDone: () => void }): ReactElement {
+  return <div className="review-complete">
+    <span className="empty-emblem"><GraduationCap size={30} /></span>
+    <p className="eyebrow">今日复习完成</p>
+    <h1>{total} 个单词</h1>
+    <div className="review-summary"><span>忘记 <b>{counts.again}</b></span><span>困难 <b>{counts.hard}</b></span><span>记得 <b>{counts.good}</b></span><span>简单 <b>{counts.easy}</b></span></div>
+    <button className="primary-button" onClick={onDone}>完成</button>
+  </div>
 }
 
 function TitleBar({
@@ -461,6 +651,8 @@ function Sidebar({
   categories,
   selectedCategoryId,
   collectionView,
+  reviewOverview,
+  onStartReview,
   onSelectCategory,
   onShowAll,
   onShowTrash,
@@ -471,6 +663,8 @@ function Sidebar({
   categories: Category[]
   selectedCategoryId: string | null
   collectionView: CollectionView
+  reviewOverview: ReviewOverview
+  onStartReview: () => void
   onSelectCategory: (id: string) => void
   onShowAll: () => void
   onShowTrash: () => void
@@ -482,6 +676,9 @@ function Sidebar({
   return (
     <aside className="sidebar">
       <nav className="side-nav" aria-label="词库导航">
+        <button className="side-nav-item" onClick={onStartReview} aria-label={reviewOverview.dueCount + reviewOverview.newCount ? `开始复习 ${reviewOverview.dueCount + reviewOverview.newCount} 个单词` : '今日复习完成'}>
+          <span><GraduationCap size={17} /> {reviewOverview.dueCount + reviewOverview.newCount ? '开始复习' : '今日完成'}</span><b>{reviewOverview.dueCount + reviewOverview.newCount || ''}</b>
+        </button>
         <button className={`side-nav-item ${collectionView === 'active' && !selectedCategoryId ? 'active' : ''}`} onClick={onShowAll} aria-current={collectionView === 'active' && !selectedCategoryId ? 'page' : undefined}>
           <span><BookOpen size={17} /> 全部单词</span><b>{total}</b>
         </button>
@@ -847,6 +1044,7 @@ function SettingsDialog({ motionState, onClose, onToast }: { motionState: Motion
   return <Dialog title="设置" motionState={motionState} onClose={requestClose} wide>{!settings ? <ListLoading /> : <div className="settings-stack">
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Sparkles size={18} /></span><div><h3>DeepSeek AI</h3><p>{checking ? '正在检查 DeepSeek…' : deepseek?.message ?? '尚未检测 DeepSeek。'}</p></div><span className={`connection-dot ${deepseek?.available ? 'online' : ''}`} /></div><label>API Key<input className="latin-field" type="password" autoComplete="new-password" value={settings.deepseekApiKey} placeholder={settings.hasDeepseekApiKey ? '已安全保存；留空则不修改' : 'sk-…'} onChange={(event) => setSettings({ ...settings, deepseekApiKey: event.target.value, clearDeepseekApiKey: false })} /></label><label>API 地址<input className="latin-field" value={settings.deepseekApiUrl} onChange={(event) => setSettings({ ...settings, deepseekApiUrl: event.target.value })} /></label><label>默认模型<select value={settings.deepseekModel} onChange={(event) => setSettings({ ...settings, deepseekModel: event.target.value })}>{modelOptions.map((model) => <option key={model} value={model}>{model}</option>)}</select></label><div className="setting-buttons"><button className="outline-button" disabled={checking} onClick={() => void checkConnection()}>{checking ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}检测 DeepSeek</button><button className="outline-button" disabled={reanalysing} onClick={() => void reanalyseAll()}>{reanalysing ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}重新分析全部</button><button className="text-button" disabled={!settings.hasDeepseekApiKey && !settings.deepseekApiKey} onClick={() => setSettings({ ...settings, deepseekApiKey: '', hasDeepseekApiKey: false, clearDeepseekApiKey: true })}>清除 API Key</button></div></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><Database size={18} /></span><div><h3>词根辞典</h3><p>{rootStatus?.message ?? '正在读取索引状态…'}</p></div></div><label>HTML 文件<input value={settings.dictionaryPath} onChange={(event) => setSettings({ ...settings, dictionaryPath: event.target.value })} /></label><div className="setting-buttons"><button className="outline-button" onClick={() => void chooseDictionary()}>选择文件</button><button className="outline-button" onClick={() => void rebuildIndex()}><RefreshCw size={15} />重建索引{rootStatus?.ready ? ` · ${rootStatus.indexedWords} 词` : ''}</button></div></section>
+    <section className="settings-section"><div className="settings-heading"><div className="settings-icon"><GraduationCap size={18} /></div><div><h3>复习</h3><p>每天最多自动加入多少个新词；到期词不受此限制。</p></div></div><label>每日新词上限<input type="number" min="0" max="100" step="1" value={settings.dailyNewLimit} onChange={(event) => setSettings({ ...settings, dailyNewLimit: Math.min(100, Math.max(0, Number.parseInt(event.target.value, 10) || 0)) })} /><span className="setting-hint">范围 0–100；设为 0 只复习到期词。</span></label></section>
     <section className="settings-section"><div className="settings-heading"><span className="settings-icon"><FileDown size={18} /></span><div><h3>数据与备份</h3><p>数据库每小时检查跨日备份，保留最近 7 份。</p></div></div><div className="setting-buttons"><button className="outline-button" onClick={() => void window.api.data.openFolder()}>打开数据目录</button><button className="outline-button" onClick={() => void exportData('json')}>导出 JSON</button><button className="outline-button" onClick={() => void exportData('csv')}>导出 CSV</button><button className="outline-button" onClick={() => void exportData('sqlite')}>导出 SQLite</button></div></section>
     <div className="dialog-actions"><button className="text-button" onClick={requestClose}>关闭</button><button className="primary-button" disabled={saving} onClick={() => void save()}>{saving ? <LoaderCircle size={17} className="spin" /> : <Check size={17} />}保存设置</button></div>
   </div>}</Dialog>

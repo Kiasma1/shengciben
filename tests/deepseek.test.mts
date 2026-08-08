@@ -203,7 +203,8 @@ test('AI provider registry resolves DeepSeek and checks it with stored settings'
     deepseekApiUrl: 'https://api.deepseek.com',
     deepseekModel: 'deepseek-v4-flash',
     deepseekApiKey: 'sk-test',
-    dictionaryPath: ''
+    dictionaryPath: '',
+    dailyNewLimit: 20
   }), {
     available: true,
     models: ['deepseek-v4-flash'],

@@ -72,53 +72,20 @@ test('存量词条迁移：规范化并合并撞键词条，幂等', (context) =
   reopened.close()
 })
 
-test('记忆曲线：首次 1 天，按时翻倍，逾期重置，提前不推进', (context) => {
+test('listing and reading words do not change review state', (context) => {
   const fixture = createDatabase()
   context.after(fixture.cleanup)
   const created = fixture.database.createWord('curve')
-  const id = created.entry.id
-  const day = 86400000
+  const raw = new Database(path.join(fixture.directory, 'shengciben.sqlite'))
+  raw.prepare(`UPDATE words SET last_reviewed_at = ?, next_review_at = ?, review_count = ? WHERE id = ?`)
+    .run('2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 4, created.entry.id)
+  raw.close()
 
-  const reviewed = (): { last: number; next: number } => {
-    const entry = fixture.database.getWord(id)
-    assert.ok(entry)
-    return { last: Date.parse(entry.lastReviewedAt ?? ''), next: Date.parse(entry.nextReviewAt ?? '') }
-  }
-  const setTimes = (lastDaysAgo: number, nextDaysFromNow: number): void => {
-    const raw = new Database(path.join(fixture.directory, 'shengciben.sqlite'))
-    raw.prepare(`UPDATE words SET last_reviewed_at = ?, next_review_at = ?, review_count = ? WHERE id = ?`)
-      .run(new Date(Date.now() - lastDaysAgo * day).toISOString(), new Date(Date.now() + nextDaysFromNow * day).toISOString(), 1, id)
-    raw.close()
-  }
-
-  // 首次复习：间隔 1 天
-  fixture.database.recordReview(id)
-  const first = reviewed()
-  assert.ok(Math.abs((first.next - first.last) - day) < 5000)
-
-  // 按时点开（上次间隔 1 天，已到期）：1 → 2 天
-  setTimes(1, 0)
-  fixture.database.recordReview(id)
-  const second = reviewed()
-  assert.ok(Math.abs((second.next - second.last) - 2 * day) < 5000)
-
-  // 按时点开（上次间隔 2 天，已到期）：2 → 4 天
-  setTimes(2, 0)
-  fixture.database.recordReview(id)
-  const third = reviewed()
-  assert.ok(Math.abs((third.next - third.last) - 4 * day) < 5000)
-
-  // 逾期超过一个间隔（last 10 天前，next 6 天前，间隔 4 天）：重置 1 天
-  setTimes(10, -6)
-  fixture.database.recordReview(id)
-  const reset = reviewed()
-  assert.ok(Math.abs((reset.next - reset.last) - day) < 5000)
-
-  // 提前点开（next 在未来 3 天，间隔 4 天）：间隔不推进
-  setTimes(1, 3)
-  fixture.database.recordReview(id)
-  const early = reviewed()
-  assert.ok(Math.abs((early.next - early.last) - 4 * day) < 5000)
+  const before = fixture.database.getWord(created.entry.id)
+  fixture.database.listWords({ query: 'curve' })
+  fixture.database.getWord(created.entry.id)
+  const after = fixture.database.getWord(created.entry.id)
+  assert.deepEqual(after, before)
 })
 
 test('记忆曲线排序：未复习最前，其次最紧迫', (context) => {
@@ -399,7 +366,8 @@ test('legacy Ollama settings migrate to DeepSeek defaults', (context) => {
     deepseekApiUrl: 'https://api.deepseek.com',
     deepseekModel: 'deepseek-v4-flash',
     deepseekApiKey: '',
-    dictionaryPath: ''
+    dictionaryPath: '',
+    dailyNewLimit: 20
   })
 })
 

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppSettingsView, ExportFormat, WordDraft, WordFilters } from '../shared/types'
+import type { AppSettingsView, ExportFormat, ReviewRating, WordDraft, WordFilters } from '../shared/types'
 
 contextBridge.exposeInMainWorld('api', {
   app: {
@@ -31,8 +31,12 @@ contextBridge.exposeInMainWorld('api', {
     save: (draft: WordDraft) => ipcRenderer.invoke('words:save', draft),
     trash: (id: string) => ipcRenderer.invoke('words:trash', id),
     restore: (id: string) => ipcRenderer.invoke('words:restore', id),
-    review: (id: string) => ipcRenderer.invoke('words:review', id),
     emptyTrash: () => ipcRenderer.invoke('words:empty-trash')
+  },
+  reviews: {
+    overview: () => ipcRenderer.invoke('reviews:overview'),
+    queue: () => ipcRenderer.invoke('reviews:queue'),
+    grade: (id: string, rating: ReviewRating) => ipcRenderer.invoke('reviews:grade', id, rating)
   },
   categories: {
     list: () => ipcRenderer.invoke('categories:list'),

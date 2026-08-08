@@ -10,6 +10,11 @@ import type {
   EnrichmentStatus,
   QueueStatus,
   RootMatch,
+  ReviewGradeResult,
+  ReviewOverview,
+  ReviewQueueItem,
+  ReviewQueueResult,
+  ReviewRating,
   Tag,
   WordCreateResult,
   WordDraft,
@@ -26,7 +31,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   deepseekApiUrl: 'https://api.deepseek.com',
   deepseekModel: 'deepseek-v4-flash',
   deepseekApiKey: '',
-  dictionaryPath: ''
+  dictionaryPath: '',
+  dailyNewLimit: 20
 }
 
 export interface SecretCodec {
@@ -61,6 +67,60 @@ type WordRow = {
 
 const now = (): string => new Date().toISOString()
 const normalizeWord = (value: string): string => value.trim().toLocaleLowerCase('en-US')
+
+const MINUTES_PER_DAY = 24 * 60
+const MAX_REVIEW_INTERVAL_MINUTES = 365 * MINUTES_PER_DAY
+const REVIEW_RATINGS: ReviewRating[] = ['again', 'hard', 'good', 'easy']
+const INITIAL_REVIEW_INTERVALS: Record<ReviewRating, number> = {
+  again: 10,
+  hard: MINUTES_PER_DAY,
+  good: 2 * MINUTES_PER_DAY,
+  easy: 4 * MINUTES_PER_DAY
+}
+
+export const normalizeDailyNewLimit = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value), 10)
+  return Number.isFinite(parsed) ? Math.min(100, Math.max(0, Math.trunc(parsed))) : DEFAULT_SETTINGS.dailyNewLimit
+}
+
+const isReviewRating = (value: string): value is ReviewRating => REVIEW_RATINGS.includes(value as ReviewRating)
+
+export const calculateReviewIntervals = (previousIntervalMinutes: number | null): Record<ReviewRating, number> => {
+  if (!previousIntervalMinutes || previousIntervalMinutes < 1) return { ...INITIAL_REVIEW_INTERVALS }
+  return {
+    again: 10,
+    hard: Math.min(MAX_REVIEW_INTERVAL_MINUTES, Math.max(MINUTES_PER_DAY, Math.round(previousIntervalMinutes * 1.2))),
+    good: Math.min(MAX_REVIEW_INTERVAL_MINUTES, Math.max(2 * MINUTES_PER_DAY, Math.round(previousIntervalMinutes * 2.5))),
+    easy: Math.min(MAX_REVIEW_INTERVAL_MINUTES, Math.max(4 * MINUTES_PER_DAY, Math.round(previousIntervalMinutes * 4)))
+  }
+}
+
+export const calculateNextReview = (
+  previousIntervalMinutes: number | null,
+  rating: ReviewRating,
+  reviewedAt: Date = new Date()
+): { nextReviewAt: string; intervalMinutes: number } => {
+  if (!isReviewRating(rating)) throw new Error('复习评分无效。')
+  const intervalMinutes = calculateReviewIntervals(previousIntervalMinutes)[rating]
+  return {
+    nextReviewAt: new Date(reviewedAt.getTime() + intervalMinutes * 60_000).toISOString(),
+    intervalMinutes
+  }
+}
+
+const localDayBounds = (date = new Date()): { start: string; end: string } => {
+  const start = new Date(date)
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 1)
+  return { start: start.toISOString(), end: end.toISOString() }
+}
+
+const previousIntervalMinutes = (lastReviewedAt: string | null, nextReviewAt: string | null): number | null => {
+  if (!lastReviewedAt || !nextReviewAt) return null
+  const interval = Math.round((Date.parse(nextReviewAt) - Date.parse(lastReviewedAt)) / 60_000)
+  return Number.isFinite(interval) && interval > 0 ? interval : null
+}
 
 // pluralize 库的规则覆盖不了的词，手动修正
 const PLURAL_OVERRIDES: Record<string, string> = {
@@ -226,8 +286,20 @@ export class AppDatabase {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS review_events (
+        id TEXT PRIMARY KEY,
+        word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
+        rating TEXT NOT NULL CHECK (rating IN ('again', 'hard', 'good', 'easy')),
+        reviewed_at TEXT NOT NULL,
+        previous_next_review_at TEXT,
+        next_review_at TEXT NOT NULL,
+        interval_minutes INTEGER NOT NULL,
+        was_new INTEGER NOT NULL DEFAULT 0
+      );
       CREATE INDEX IF NOT EXISTS idx_words_active_updated ON words(is_deleted, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_review_events_word_reviewed ON review_events(word_id, reviewed_at);
+      CREATE INDEX IF NOT EXISTS idx_review_events_reviewed_at ON review_events(reviewed_at);
     `)
 
     const rootColumns = this.db.pragma('table_info(root_matches)') as { name: string }[]
@@ -484,31 +556,80 @@ export class AppDatabase {
     this.db.prepare(`UPDATE words SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE id = ?`).run(now(), id)
   }
 
-  // 简化记忆曲线间隔（天）：首次 1，按时翻倍，逾期重置，封顶 30
-  recordReview(id: string): void {
-    const row = this.db
-      .prepare(`SELECT last_reviewed_at, review_count, next_review_at FROM words WHERE id = ?`)
-      .get(id) as { last_reviewed_at: string | null; review_count: number; next_review_at: string | null } | undefined
-    if (!row) return
-    const timestamp = now()
-    let intervalDays = 1
-    if (row.next_review_at && row.review_count > 0) {
-      const nowMs = Date.parse(timestamp)
-      const nextMs = Date.parse(row.next_review_at)
-      const lastMs = Date.parse(row.last_reviewed_at ?? timestamp)
-      const lastIntervalDays = Math.max(1, Math.round((nextMs - lastMs) / 86400000))
-      if (nowMs >= nextMs) {
-        // 按时或逾期：逾期超过一个间隔（宽限期）则重置，否则翻倍
-        intervalDays = nowMs > nextMs + lastIntervalDays * 86400000 ? 1 : Math.min(30, lastIntervalDays * 2)
-      } else {
-        // 提前点开：只刷新上次复习时间，不推进间隔
-        intervalDays = lastIntervalDays
-      }
+  private listReviewEntries(kind: 'due' | 'new', limit?: number): WordEntry[] {
+    const condition = kind === 'due' ? 'w.next_review_at IS NOT NULL AND w.next_review_at <= @now' : 'w.next_review_at IS NULL'
+    const order = kind === 'due' ? 'w.next_review_at ASC, w.created_at ASC' : 'w.created_at ASC'
+    const limitClause = limit === undefined ? '' : ' LIMIT @limit'
+    const rows = this.db
+      .prepare(`
+        SELECT w.*, c.name AS category_name, c.color AS category_color
+        FROM words w JOIN categories c ON c.id = w.category_id
+        WHERE w.is_deleted = 0 AND ${condition}
+          AND EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND trim(s.definition_zh) <> '')
+        ORDER BY ${order}${limitClause}
+      `)
+      .all(limit === undefined ? { now: now() } : { now: now(), limit }) as WordRow[]
+    return rows.map((row) => this.hydrateWord(row))
+  }
+
+  getReviewOverview(): ReviewOverview {
+    const bounds = localDayBounds()
+    const today = this.db
+      .prepare(`SELECT count(*) AS todayReviewed, coalesce(sum(CASE WHEN was_new = 1 THEN 1 ELSE 0 END), 0) AS todayNewReviewed FROM review_events WHERE reviewed_at >= ? AND reviewed_at < ?`)
+      .get(bounds.start, bounds.end) as { todayReviewed: number; todayNewReviewed: number }
+    const dueCount = this.db
+      .prepare(`SELECT count(*) AS count FROM words w WHERE w.is_deleted = 0 AND w.next_review_at IS NOT NULL AND w.next_review_at <= ? AND EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND trim(s.definition_zh) <> '')`)
+      .get(now()) as { count: number }
+    const newEligibleCount = this.db
+      .prepare(`SELECT count(*) AS count FROM words w WHERE w.is_deleted = 0 AND w.next_review_at IS NULL AND EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND trim(s.definition_zh) <> '')`)
+      .get() as { count: number }
+    const dailyNewLimit = this.getSettings().dailyNewLimit
+    return {
+      dueCount: dueCount.count,
+      newCount: Math.min(newEligibleCount.count, Math.max(0, dailyNewLimit - today.todayNewReviewed)),
+      todayReviewed: today.todayReviewed,
+      todayNewReviewed: today.todayNewReviewed,
+      dailyNewLimit
     }
-    const nextReview = new Date(Date.parse(timestamp) + intervalDays * 86400000).toISOString()
-    this.db
-      .prepare(`UPDATE words SET last_reviewed_at = ?, review_count = review_count + 1, next_review_at = ?, updated_at = ? WHERE id = ?`)
-      .run(timestamp, nextReview, timestamp, id)
+  }
+
+  getReviewQueue(): ReviewQueueResult {
+    const overview = this.getReviewOverview()
+    const entries = [...this.listReviewEntries('due'), ...this.listReviewEntries('new', overview.newCount)]
+    const items: ReviewQueueItem[] = entries.map((entry) => ({
+      entry,
+      intervals: calculateReviewIntervals(previousIntervalMinutes(entry.lastReviewedAt, entry.nextReviewAt))
+    }))
+    return { items, dueCount: overview.dueCount, newCount: Math.max(0, items.length - overview.dueCount) }
+  }
+
+  gradeReview(id: string, rating: ReviewRating): ReviewGradeResult {
+    if (!isReviewRating(rating)) throw new Error('复习评分无效。')
+    const result = this.db.transaction(() => {
+      const row = this.db
+        .prepare(`
+          SELECT w.last_reviewed_at, w.next_review_at, w.review_count, w.is_deleted,
+            EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND trim(s.definition_zh) <> '') AS has_definition
+          FROM words w WHERE w.id = ?
+        `)
+        .get(id) as { last_reviewed_at: string | null; next_review_at: string | null; review_count: number; is_deleted: number; has_definition: number } | undefined
+      if (!row || row.is_deleted || !row.has_definition) throw new Error('该单词当前不可复习。')
+      if (row.next_review_at && Number.isFinite(Date.parse(row.next_review_at)) && Date.parse(row.next_review_at) > Date.now()) {
+        throw new Error('该单词尚未到复习时间。')
+      }
+      const reviewedAt = now()
+      const calculated = calculateNextReview(previousIntervalMinutes(row.last_reviewed_at, row.next_review_at), rating, new Date(reviewedAt))
+      this.db
+        .prepare(`INSERT INTO review_events (id, word_id, rating, reviewed_at, previous_next_review_at, next_review_at, interval_minutes, was_new) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(randomUUID(), id, rating, reviewedAt, row.next_review_at, calculated.nextReviewAt, calculated.intervalMinutes, row.next_review_at === null ? 1 : 0)
+      this.db
+        .prepare(`UPDATE words SET last_reviewed_at = ?, review_count = review_count + 1, next_review_at = ?, updated_at = ? WHERE id = ?`)
+        .run(reviewedAt, calculated.nextReviewAt, reviewedAt, id)
+      return calculated
+    })()
+    const entry = this.getWord(id)
+    if (!entry) throw new Error('复习后读取单词失败。')
+    return { entry, rating, ...result }
   }
 
   emptyTrash(): number {
@@ -556,6 +677,7 @@ export class AppDatabase {
     const rows = this.db.prepare(`SELECT key, value FROM settings WHERE substr(key, 1, 1) <> '_'`).all() as { key: keyof AppSettings; value: string }[]
     const entries = rows.map((row) => [row.key, row.value])
     const settings = { ...DEFAULT_SETTINGS, ...Object.fromEntries(entries) } as AppSettings
+    settings.dailyNewLimit = normalizeDailyNewLimit(settings.dailyNewLimit)
     settings.deepseekApiKey = settings.deepseekApiKey ? this.secretCodec.decode(settings.deepseekApiKey) : ''
     return settings
   }
@@ -564,7 +686,7 @@ export class AppDatabase {
     const statement = this.db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
     const transaction = this.db.transaction(() => {
       for (const [key, value] of Object.entries(settings)) {
-        const cleanValue = value.trim()
+        const cleanValue = key === 'dailyNewLimit' ? String(normalizeDailyNewLimit(value)) : String(value).trim()
         statement.run(key, key === 'deepseekApiKey' && cleanValue ? this.secretCodec.encode(cleanValue) : cleanValue)
       }
     })

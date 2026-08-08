@@ -2,6 +2,7 @@ export type EnrichmentStatus = 'pending' | 'processing' | 'ready' | 'failed'
 export type RootMatchMode = 'exact' | 'lemma' | 'morpheme' | 'ai'
 export type MorphemeKind = 'prefix' | 'root' | 'suffix'
 export type MorphemeSource = 'dictionary' | 'ai'
+export type ReviewRating = 'again' | 'hard' | 'good' | 'easy'
 
 export interface AiMorpheme {
   kind: MorphemeKind
@@ -88,6 +89,7 @@ export interface AppSettings {
   deepseekModel: string
   deepseekApiKey: string
   dictionaryPath: string
+  dailyNewLimit: number
 }
 
 export interface AppSettingsView {
@@ -98,6 +100,7 @@ export interface AppSettingsView {
   hasDeepseekApiKey: boolean
   clearDeepseekApiKey: boolean
   dictionaryPath: string
+  dailyNewLimit: number
 }
 
 export interface DeepSeekStatus {
@@ -121,6 +124,32 @@ export interface RootIndexStatus {
   updatedAt: string | null
   ready: boolean
   message: string
+}
+
+export interface ReviewOverview {
+  dueCount: number
+  newCount: number
+  todayReviewed: number
+  todayNewReviewed: number
+  dailyNewLimit: number
+}
+
+export interface ReviewQueueItem {
+  entry: WordEntry
+  intervals: Record<ReviewRating, number>
+}
+
+export interface ReviewQueueResult {
+  items: ReviewQueueItem[]
+  dueCount: number
+  newCount: number
+}
+
+export interface ReviewGradeResult {
+  entry: WordEntry
+  rating: ReviewRating
+  nextReviewAt: string
+  intervalMinutes: number
 }
 
 export interface WordCreateResult {

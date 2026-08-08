@@ -6,6 +6,10 @@ import type {
   DeepSeekStatus,
   ExportFormat,
   QueueStatus,
+  ReviewGradeResult,
+  ReviewOverview,
+  ReviewQueueResult,
+  ReviewRating,
   RootIndexStatus,
   Tag,
   WordCreateResult,
@@ -38,8 +42,12 @@ declare global {
         save: (draft: WordDraft) => Promise<WordEntry>
         trash: (id: string) => Promise<void>
         restore: (id: string) => Promise<void>
-        review: (id: string) => Promise<void>
         emptyTrash: () => Promise<number>
+      }
+      reviews: {
+        overview: () => Promise<ReviewOverview>
+        queue: () => Promise<ReviewQueueResult>
+        grade: (id: string, rating: ReviewRating) => Promise<ReviewGradeResult>
       }
       categories: {
         list: () => Promise<Category[]>
