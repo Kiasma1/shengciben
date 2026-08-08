@@ -1,10 +1,10 @@
-import type { AiEnrichment, AppSettings, DeepSeekStatus } from '../shared/types'
+import type { AiEnrichment, AppSettings, DeepSeekStatus, EntryType } from '../shared/types'
 
 export interface AiProvider {
   readonly id: AppSettings['aiProvider']
   check(settings: AppSettings): Promise<DeepSeekStatus>
   enrich(
-    input: { settings: AppSettings; word: string; existingCategories: string[] },
+    input: { settings: AppSettings; word: string; entryType: EntryType; existingCategories: string[] },
     status: DeepSeekStatus
   ): Promise<AiEnrichment>
 }

@@ -57,6 +57,11 @@ const mergeSettingsView = (view: AppSettingsView): AppSettings => {
 async function refreshRootMatches(wordId: string): Promise<void> {
   const entry = database.getWord(wordId)
   if (!entry) return
+  if (entry.entryType === 'phrase') {
+    database.setRootMatches(wordId, [])
+    notifyChanged()
+    return
+  }
   const settings = database.getSettings()
   const matches = entry.aiMorphemes.length
     ? await rootIndexer.reconcile(entry.word, entry.aiMorphemes, settings.dictionaryPath)
@@ -157,6 +162,7 @@ function setupIpc(): void {
   ipcMain.on('window:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close())
   ipcMain.handle('words:list', (_event, filters: WordFilters) => database.listWords(filters))
   ipcMain.handle('words:get', (_event, id: string) => database.getWord(id))
+  ipcMain.handle('words:get-by-normalized', (_event, word: string) => database.getWordByNormalized(word))
   ipcMain.handle('words:create', (_event, word: string) => {
     const result = database.createWord(word)
     notifyChanged()

@@ -3,7 +3,12 @@ export type RootMatchMode = 'exact' | 'lemma' | 'morpheme' | 'ai'
 export type MorphemeKind = 'prefix' | 'root' | 'suffix'
 export type MorphemeSource = 'dictionary' | 'ai'
 export type ReviewRating = 'again' | 'hard' | 'good' | 'easy'
+export type EntryType = 'word' | 'phrase'
 
+export interface PhraseComponent {
+  text: string
+  meaningZh: string
+}
 export interface AiMorpheme {
   kind: MorphemeKind
   form: string
@@ -47,6 +52,10 @@ export interface WordEntry {
   id: string
   word: string
   normalizedWord: string
+  entryType: EntryType
+  phraseType: string
+  phraseComponents: PhraseComponent[]
+  phraseExplanation: string
   ipaUk: string
   senses: WordSense[]
   categoryId: string
@@ -110,12 +119,16 @@ export interface DeepSeekStatus {
 }
 
 export interface AiEnrichment {
+  entryType: EntryType
   ipaUk: string
   senses: WordSense[]
   suggestedCategory: string | null
   tagNames: string[]
   morphemes: AiMorpheme[]
   formationSummary: string
+  phraseType: string
+  phraseComponents: PhraseComponent[]
+  phraseExplanation: string
 }
 
 export interface RootIndexStatus {

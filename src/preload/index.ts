@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('api', {
   words: {
     list: (filters: WordFilters) => ipcRenderer.invoke('words:list', filters),
     get: (id: string) => ipcRenderer.invoke('words:get', id),
+    getByNormalized: (word: string) => ipcRenderer.invoke('words:get-by-normalized', word),
     create: (word: string) => ipcRenderer.invoke('words:create', word),
     save: (draft: WordDraft) => ipcRenderer.invoke('words:save', draft),
     trash: (id: string) => ipcRenderer.invoke('words:trash', id),

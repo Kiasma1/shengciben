@@ -8,6 +8,7 @@ import type {
   AiMorpheme,
   Category,
   EnrichmentStatus,
+  EntryType,
   QueueStatus,
   RootMatch,
   ReviewGradeResult,
@@ -20,8 +21,10 @@ import type {
   WordDraft,
   WordEntry,
   WordFilters,
-  WordSense
+  WordSense,
+  PhraseComponent
 } from '../shared/types'
+import { entryInputError, entryTypeFor, normalizeEntryWhitespace, validatePhraseComponents } from '../shared/entry.ts'
 import pluralize from 'pluralize'
 
 const UNCATEGORIZED_ID = 'uncategorized'
@@ -49,6 +52,10 @@ type WordRow = {
   id: string
   word: string
   normalized_word: string
+  entry_type: EntryType
+  phrase_type: string
+  phrase_components_json: string
+  phrase_explanation: string
   ipa_uk: string
   category_id: string
   category_name: string
@@ -183,12 +190,12 @@ const PROPER_NOUNS = new Set([
 ])
 
 /**
- * 规范用户输入的单词：去除首尾与多余空格；字母默认全部转小写，
+ * 规范用户输入的词汇：去除首尾与多余空格；字母默认全部转小写，
  * 专有名词（国家、语言、民族、主要城市、月份、星期等）保留用户输入的大小写；
- * 单个单词自动把复数转为单数。多词短语（如 "ad hoc"）保留内部空格，原样返回。
+ * 单个单词自动把复数转为单数。多词短语只保留空白规范，不做单复数归一化。
  */
 export const normalizeWordInput = (raw: string): string => {
-  const cleaned = raw.trim().replace(/\s+/g, ' ')
+  const cleaned = normalizeEntryWhitespace(raw)
   if (cleaned.includes(' ')) return cleaned
   const lower = cleaned.toLocaleLowerCase('en-US')
   if (PROPER_NOUNS.has(lower)) return cleaned
@@ -232,6 +239,10 @@ export class AppDatabase {
         id TEXT PRIMARY KEY,
         word TEXT NOT NULL,
         normalized_word TEXT NOT NULL UNIQUE,
+        entry_type TEXT NOT NULL DEFAULT 'word' CHECK (entry_type IN ('word', 'phrase')),
+        phrase_type TEXT NOT NULL DEFAULT '',
+        phrase_components_json TEXT NOT NULL DEFAULT '[]',
+        phrase_explanation TEXT NOT NULL DEFAULT '',
         ipa_uk TEXT NOT NULL DEFAULT '',
         category_id TEXT NOT NULL REFERENCES categories(id),
         enrichment_status TEXT NOT NULL DEFAULT 'pending',
@@ -331,6 +342,19 @@ export class AppDatabase {
       this.db.exec(`ALTER TABLE words ADD COLUMN morphology_version INTEGER NOT NULL DEFAULT 0`)
     }
     const reviewColumns = this.db.pragma('table_info(words)') as { name: string }[]
+    if (!reviewColumns.some((column) => column.name === 'entry_type')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'word'`)
+    }
+    if (!reviewColumns.some((column) => column.name === 'phrase_type')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN phrase_type TEXT NOT NULL DEFAULT ''`)
+    }
+    if (!reviewColumns.some((column) => column.name === 'phrase_components_json')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN phrase_components_json TEXT NOT NULL DEFAULT '[]'`)
+    }
+    if (!reviewColumns.some((column) => column.name === 'phrase_explanation')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN phrase_explanation TEXT NOT NULL DEFAULT ''`)
+    }
+    this.db.prepare(`UPDATE words SET entry_type = 'word' WHERE entry_type IS NULL OR entry_type NOT IN ('word', 'phrase')`).run()
     if (!reviewColumns.some((column) => column.name === 'last_reviewed_at')) {
       this.db.exec(`ALTER TABLE words ADD COLUMN last_reviewed_at TEXT`)
     }
@@ -444,7 +468,7 @@ export class AppDatabase {
     }
     if (filters.query?.trim()) {
       clauses.push(`(
-        lower(w.word) LIKE @query OR lower(w.ipa_uk) LIKE @query OR lower(w.formation_summary) LIKE @query OR lower(c.name) LIKE @query OR
+        lower(w.word) LIKE @query OR lower(w.ipa_uk) LIKE @query OR lower(w.phrase_type) LIKE @query OR lower(w.phrase_components_json) LIKE @query OR lower(w.phrase_explanation) LIKE @query OR lower(w.formation_summary) LIKE @query OR lower(c.name) LIKE @query OR
         EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND (lower(s.part_of_speech) LIKE @query OR lower(s.definition_zh) LIKE @query)) OR
         EXISTS (SELECT 1 FROM word_tags wt JOIN tags t ON t.id = wt.tag_id WHERE wt.word_id = w.id AND lower(t.name) LIKE @query) OR
         EXISTS (SELECT 1 FROM root_matches rm WHERE rm.word_id = w.id AND (lower(rm.root) LIKE @query OR lower(rm.surface_form) LIKE @query OR lower(rm.meaning) LIKE @query OR lower(rm.formation_note) LIKE @query))
@@ -467,7 +491,7 @@ export class AppDatabase {
   }
 
   listRootRefreshTargets(): { id: string; word: string }[] {
-    return this.db.prepare('SELECT id, word FROM words').all() as { id: string; word: string }[]
+    return this.db.prepare(`SELECT id, word FROM words WHERE entry_type = 'word'`).all() as { id: string; word: string }[]
   }
 
   getWord(id: string): WordEntry | null {
@@ -480,12 +504,24 @@ export class AppDatabase {
     return row ? this.hydrateWord(row) : null
   }
 
+  getWordByNormalized(rawWord: string): WordEntry | null {
+    const normalized = normalizeWord(normalizeWordInput(rawWord))
+    const row = this.db
+      .prepare(`
+        SELECT w.*, c.name AS category_name, c.color AS category_color
+        FROM words w JOIN categories c ON c.id = w.category_id
+        WHERE w.normalized_word = ? AND w.is_deleted = 0
+      `)
+      .get(normalized) as WordRow | undefined
+    return row ? this.hydrateWord(row) : null
+  }
+
   createWord(rawWord: string): WordCreateResult {
     const word = normalizeWordInput(rawWord)
+    const inputError = entryInputError(word)
+    if (inputError) throw new Error(inputError)
+    const entryType = entryTypeFor(word)
     const normalizedWord = normalizeWord(word)
-    if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(word)) {
-      throw new Error('请输入单个英文单词；可包含连字符或撇号。')
-    }
 
     const existing = this.db.prepare('SELECT id FROM words WHERE normalized_word = ?').get(normalizedWord) as { id: string } | undefined
     if (existing) {
@@ -498,9 +534,9 @@ export class AppDatabase {
     const createdAt = now()
     const insert = this.db.transaction(() => {
       this.db
-        .prepare(`INSERT INTO words (id, word, normalized_word, category_id, enrichment_status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
-        .run(id, word, normalizedWord, UNCATEGORIZED_ID, createdAt, createdAt)
+        .prepare(`INSERT INTO words (id, word, normalized_word, entry_type, category_id, enrichment_status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`)
+        .run(id, word, normalizedWord, entryType, UNCATEGORIZED_ID, createdAt, createdAt)
       this.db
         .prepare(`INSERT INTO tasks (id, word_id, status, priority, created_at, updated_at) VALUES (?, ?, 'pending', 100, ?, ?)`)
         .run(randomUUID(), id, createdAt, createdAt)
@@ -512,9 +548,14 @@ export class AppDatabase {
   }
 
   saveWord(draft: WordDraft): WordEntry {
-    const word = draft.word.trim()
+    const word = normalizeWordInput(draft.word)
+    const inputError = entryInputError(word)
+    if (inputError) throw new Error(inputError)
+    const entryType = entryTypeFor(word)
     const normalizedWord = normalizeWord(word)
-    if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(word)) throw new Error('请输入单个英文单词；可包含连字符或撇号。')
+    const current = this.getWord(draft.id)
+    if (!current) throw new Error('保存词条失败。')
+    const identityChanged = current.entryType !== entryType || current.normalizedWord !== normalizedWord
     if (!this.db.prepare('SELECT id FROM categories WHERE id = ?').get(draft.categoryId)) throw new Error('所选分类不存在。')
 
     const cleanSenses = draft.senses
@@ -525,26 +566,33 @@ export class AppDatabase {
     const update = this.db.transaction(() => {
       try {
         this.db
-          .prepare(`UPDATE words SET word = ?, normalized_word = ?, ipa_uk = ?, category_id = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
+          .prepare(`UPDATE words SET word = ?, normalized_word = ?, entry_type = ?, ipa_uk = ?, category_id = ?, enrichment_status = '${identityChanged ? 'pending' : 'ready'}', ai_error = NULL, ai_reviewed = ${identityChanged ? 0 : 1}, suggested_category = NULL, updated_at = ? WHERE id = ?`)
           .run(
             word,
             normalizedWord,
+            entryType,
             draft.ipaUk.trim(),
             draft.categoryId,
             now(),
             draft.id
           )
       } catch (error) {
-        if (error instanceof Error && error.message.includes('UNIQUE')) throw new Error('该单词已存在。')
+        if (error instanceof Error && error.message.includes('UNIQUE')) throw new Error('该词汇已存在。')
         throw error
+      }
+      if (identityChanged) {
+        this.db.prepare(`UPDATE words SET ai_morphemes_json = '[]', formation_summary = '', phrase_type = '', phrase_components_json = '[]', phrase_explanation = '' WHERE id = ?`).run(draft.id)
+        this.db.prepare('DELETE FROM root_matches WHERE word_id = ?').run(draft.id)
+        this.db.prepare(`UPDATE tasks SET status = 'pending', priority = 100, retry_count = 0, error = NULL, updated_at = ? WHERE word_id = ?`).run(now(), draft.id)
+      } else {
+        this.db.prepare(`UPDATE tasks SET status = 'completed', error = NULL, updated_at = ? WHERE word_id = ?`).run(now(), draft.id)
       }
       this.replaceSenses(draft.id, cleanSenses)
       this.replaceTags(draft.id, draft.tagNames)
-      this.db.prepare(`UPDATE tasks SET status = 'completed', error = NULL, updated_at = ? WHERE word_id = ?`).run(now(), draft.id)
     })
     update()
     const entry = this.getWord(draft.id)
-    if (!entry) throw new Error('保存单词失败。')
+    if (!entry) throw new Error('保存词条失败。')
     return entry
   }
 
@@ -763,7 +811,8 @@ export class AppDatabase {
   applyEnrichment(wordId: string, result: AiEnrichment): void {
     const transaction = this.db.transaction(() => {
       const current = this.getWord(wordId)
-      let categoryId = current?.categoryId && current.categoryId !== UNCATEGORIZED_ID ? current.categoryId : UNCATEGORIZED_ID
+      if (!current) throw new Error('待处理词条不存在。')
+      let categoryId = current.categoryId && current.categoryId !== UNCATEGORIZED_ID ? current.categoryId : UNCATEGORIZED_ID
       const categoryName = result.suggestedCategory?.trim()
       if (categoryId === UNCATEGORIZED_ID && categoryName) {
         this.db
@@ -773,20 +822,25 @@ export class AppDatabase {
           this.db.prepare('SELECT id FROM categories WHERE name = ? COLLATE NOCASE').get(categoryName) as { id: string }
         ).id
       }
+      const phrase = current.entryType === 'phrase'
+      const phraseComponents = phrase ? validatePhraseComponents(current.word, result.phraseComponents ?? []) : []
       this.db
-        .prepare(`UPDATE words SET ipa_uk = ?, category_id = ?, ai_morphemes_json = ?, formation_summary = ?, morphology_version = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
+        .prepare(`UPDATE words SET ipa_uk = ?, category_id = ?, ai_morphemes_json = ?, formation_summary = ?, phrase_type = ?, phrase_components_json = ?, phrase_explanation = ?, morphology_version = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
         .run(
-          result.ipaUk,
+          result.ipaUk?.trim() ?? '',
           categoryId,
-          JSON.stringify(result.morphemes ?? []),
-          result.formationSummary?.trim() ?? '',
+          JSON.stringify(phrase ? [] : result.morphemes ?? []),
+          phrase ? '' : result.formationSummary?.trim() ?? '',
+          phrase ? result.phraseType?.trim() ?? '' : '',
+          JSON.stringify(phraseComponents),
+          phrase ? result.phraseExplanation?.trim() ?? '' : '',
           MORPHOLOGY_VERSION,
           now(),
           wordId
         )
-      // 已有义项说明内容来自人工编辑或上一轮 AI，重新分析只更新词素/IPA/分类，
+      // 已有义项说明内容来自人工编辑或上一轮 AI，重新分析只更新分析字段，
       // 不覆盖释义与标签，避免丢失用户数据。
-      if (!current?.senses.length) {
+      if (!current.senses.length) {
         this.replaceSenses(wordId, result.senses)
         this.replaceTags(wordId, result.tagNames)
       }
@@ -877,10 +931,21 @@ export class AppDatabase {
     } catch {
       // Corrupt optional analysis data must not block access to the wordbook.
     }
+    let phraseComponents: PhraseComponent[] = []
+    try {
+      const parsed = JSON.parse(row.phrase_components_json) as unknown
+      if (Array.isArray(parsed)) phraseComponents = parsed as PhraseComponent[]
+    } catch {
+      // Corrupt optional phrase analysis must not block access to the vocabulary.
+    }
     return {
       id: row.id,
       word: row.word,
       normalizedWord: row.normalized_word,
+      entryType: row.entry_type === 'phrase' ? 'phrase' : 'word',
+      phraseType: row.phrase_type ?? '',
+      phraseComponents,
+      phraseExplanation: row.phrase_explanation ?? '',
       ipaUk: row.ipa_uk,
       senses,
       categoryId: row.category_id,

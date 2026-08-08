@@ -38,6 +38,7 @@ declare global {
       words: {
         list: (filters: WordFilters) => Promise<WordEntry[]>
         get: (id: string) => Promise<WordEntry | null>
+        getByNormalized: (word: string) => Promise<WordEntry | null>
         create: (word: string) => Promise<WordCreateResult>
         save: (draft: WordDraft) => Promise<WordEntry>
         trash: (id: string) => Promise<void>

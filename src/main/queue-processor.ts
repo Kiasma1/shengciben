@@ -88,9 +88,12 @@ export class QueueProcessor {
       const enrichment = await provider.enrich({
         settings,
         word: entry.word,
+        entryType: entry.entryType,
         existingCategories: this.database.listCategories().map((category) => category.name)
       }, connection)
-      const rootMatches = await this.resolveMorphemes(entry.word, enrichment.morphemes ?? [])
+      const rootMatches = entry.entryType === 'word'
+        ? await this.resolveMorphemes(entry.word, enrichment.morphemes ?? [])
+        : []
       if (!this.database.isTaskProcessing(task.taskId)) return
       this.database.applyEnrichment(task.wordId, enrichment)
       this.database.setRootMatches(task.wordId, rootMatches)

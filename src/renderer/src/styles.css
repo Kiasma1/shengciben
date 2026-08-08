@@ -220,7 +220,9 @@ p { text-wrap: pretty; }
 .word-row.fresh { box-shadow: inset 3px 0 0 rgb(76 138 82 / 52%); }
 .word-row.selected { background: var(--color-surface-selected); border-color: rgb(28 28 28 / 17%); box-shadow: inset 3px 0 0 var(--color-action); }
 .word-row-main { align-items: baseline; display: flex; gap: var(--space-2); min-width: 0; }
+.word-row-title { align-items: center; display: flex; gap: var(--space-2); min-width: 0; }
 .word-row-main strong { font-family: var(--font-latin); font-size: 1.05rem; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry-type-badge { background: var(--color-surface-selected); border: 1px solid var(--color-border); border-radius: 999px; color: var(--color-text-faint); flex: 0 0 auto; font-size: var(--text-xs); font-weight: 700; padding: 0.12rem 0.42rem; }
 .word-row-main em { color: var(--color-text-faint); font-family: var(--font-latin); font-size: var(--text-sm); font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .word-row-definition { color: var(--color-text-muted); font-family: var(--font-reading); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .word-row-footer { align-items: center; display: flex; justify-content: space-between; }
@@ -292,6 +294,15 @@ p { text-wrap: pretty; }
 .root-card p { color: var(--color-text-muted); font-family: var(--font-reading); font-size: var(--text-xs); line-height: var(--line-body); }
 .root-card small { color: var(--color-text-muted); font-size: var(--text-xs); }
 .root-empty { align-items: center; background: rgb(255 255 255 / 70%); border: 1px dashed var(--color-border-strong); border-radius: var(--button-radius); color: var(--color-text-faint); display: flex; font-size: var(--text-sm); gap: var(--space-2); padding: var(--space-4); }
+.phrase-analysis { border-top: 1px solid var(--color-border); padding-top: var(--space-6); }
+.phrase-explanation { color: var(--color-text-muted); font-family: var(--font-reading); line-height: var(--line-body); }
+.phrase-components { display: grid; gap: var(--space-2); }
+.phrase-component { align-items: center; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--button-radius); display: flex; gap: var(--space-3); justify-content: space-between; padding: var(--space-3) var(--space-4); }
+.phrase-component > div { display: grid; gap: var(--space-1); min-width: 0; }
+.phrase-component code { font-family: var(--font-latin); font-size: var(--text-md); font-weight: 720; }
+.phrase-component span, .component-unlinked { color: var(--color-text-muted); font-family: var(--font-reading); font-size: var(--text-sm); }
+.phrase-component .text-button { align-items: center; display: inline-flex; flex: 0 0 auto; gap: var(--space-1); }
+.component-unlinked { color: var(--color-text-faint); flex: 0 0 auto; }
 .actions-section { border-top: 1px solid var(--color-border); padding-top: var(--space-6); }
 .detail-actions { align-items: center; display: flex; justify-content: space-between; }
 .primary-button, .danger-button { align-items: center; border-radius: 999px; display: inline-flex; font-weight: 720; gap: var(--space-2); justify-content: center; min-height: var(--control-height); padding: 0 var(--space-4); transition: background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-instant); }
@@ -331,6 +342,11 @@ p { text-wrap: pretty; }
 .review-senses strong { color: var(--color-text-muted); font-family: var(--font-latin); font-size: var(--text-sm); text-align: right; }
 .review-senses span, .review-formation > p:last-child { font-family: var(--font-reading); line-height: var(--line-body); }
 .review-formation, .review-roots { border-top: 1px solid var(--color-border); display: grid; gap: var(--space-2); padding-top: var(--space-4); }
+.review-phrase-explanation { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.review-phrase-components { display: grid; gap: var(--space-2); }
+.review-phrase-components p { align-items: baseline; display: grid; gap: var(--space-4); grid-template-columns: 7rem 1fr; }
+.review-phrase-components strong { font-family: var(--font-latin); text-align: right; }
+.review-phrase-components span { font-family: var(--font-reading); line-height: var(--line-body); }
 .review-rating-section { display: grid; gap: var(--space-3); max-width: 42rem; width: 100%; }
 .review-rating-grid { display: grid; gap: var(--space-2); grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .review-rating-button { background: var(--glass-regular); border: 1px solid var(--glass-border); border-radius: var(--button-radius); box-shadow: var(--shadow-control); color: var(--color-text); display: grid; gap: var(--space-2); min-height: 4.25rem; padding: var(--space-3); text-align: left; transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-instant); }
@@ -345,6 +361,7 @@ p { text-wrap: pretty; }
 .review-summary span:last-child { border-right: 0; }
 .review-summary b { color: var(--color-text); font-family: var(--font-latin); font-size: var(--text-lg); }
 .setting-hint { color: var(--color-text-faint); font-size: var(--text-xs); }
+.field-error { color: var(--color-danger); font-size: var(--text-xs); }
 
 .dialog-backdrop { align-items: center; background: var(--overlay-strong); display: flex; inset: 0; justify-content: center; opacity: 1; padding: var(--space-5); position: fixed; transition: opacity var(--duration-standard) var(--ease-out-fluid); z-index: var(--z-dialog); }
 .dialog { -webkit-backdrop-filter: var(--material-glass-thick); backdrop-filter: var(--material-glass-thick); background: var(--color-popover); border: 1px solid var(--glass-border); border-radius: var(--radius-xl); box-shadow: var(--shadow-raised), inset 0 1px 0 var(--glass-edge); display: grid; gap: var(--space-5); max-width: 29rem; opacity: 1; padding: var(--space-6); transform: scale(1); transition: border-radius var(--duration-standard) var(--ease-out-fluid), opacity var(--duration-standard) var(--ease-out-fluid), transform var(--duration-standard) var(--ease-out-fluid); width: 100%; }

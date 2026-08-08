@@ -179,6 +179,69 @@ test('exhausted retryable failures mark the word failed instead of retrying fore
   assert.deepEqual(processor.getStatus(), { pending: 0, processing: 0, failed: 1, paused: false })
 })
 
+test('phrase queue enrichment skips morphology and persists phrase analysis', async (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-phrase-queue-'))
+  const database = new AppDatabase(directory)
+  context.after(() => {
+    database.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const created = database.createWord('welfare check')
+  let receivedEntryType = ''
+  let resolveCalled = false
+  const provider = {
+    id: 'deepseek',
+    check: async () => ({ available: true, models: ['test'], message: 'ok' }),
+    enrich: async (input: { entryType: string }) => {
+      receivedEntryType = input.entryType
+      return {
+        entryType: 'phrase' as const,
+        ipaUk: '',
+        senses: [{ partOfSpeech: 'noun phrase', definitionZh: '整体释义' }],
+        suggestedCategory: null,
+        tagNames: [],
+        morphemes: [],
+        formationSummary: '',
+        phraseType: 'expression',
+        phraseComponents: [{ text: 'welfare', meaningZh: '安全状况' }, { text: 'check', meaningZh: '确认' }],
+        phraseExplanation: '整体表达说明'
+      }
+    }
+  }
+  const processor = new QueueProcessor(database, { get: () => provider }, () => undefined, async () => {
+    resolveCalled = true
+    return []
+  })
+
+  await processor.processNext()
+
+  const enriched = database.getWord(created.entry.id)
+  assert.equal(receivedEntryType, 'phrase')
+  assert.equal(resolveCalled, false)
+  assert.equal(enriched?.phraseType, 'expression')
+  assert.equal(enriched?.phraseComponents[0]?.text, 'welfare')
+  assert.equal(enriched?.rootMatches.length, 0)
+})
+
+test('phrase queue reuses retry and failure handling', async (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-phrase-retry-'))
+  const database = new AppDatabase(directory)
+  context.after(() => {
+    database.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const created = database.createWord('take care of')
+  const provider = {
+    id: 'deepseek',
+    check: async () => ({ available: true, models: ['test'], message: 'ok' }),
+    enrich: async () => { throw new DeepSeekApiError(429, 'retry phrase', true) }
+  }
+  const processor = new QueueProcessor(database, { get: () => provider }, () => undefined)
+  await processor.processNext()
+  assert.equal(database.getWord(created.entry.id)?.status, 'pending')
+  assert.equal(database.getQueueStatus(false).pending, 1)
+})
+
 test('AI queue stores the reconciled morpheme chain with the enrichment', async (context) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-morpheme-queue-'))
   const database = new AppDatabase(directory)
