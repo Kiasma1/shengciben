@@ -1,6 +1,6 @@
 {
   "name": "shengciben",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "DeepSeek AI 生词本",
   "main": "./out/main/index.js",
   "author": "",
@@ -9,6 +9,7 @@
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
     "test": "node --no-warnings --experimental-strip-types --test tests/*.test.mts",
+    "eval:phrases:blind": "node --no-warnings --experimental-strip-types scripts/evaluate-local-phrases.mts",
     "test:roots:random": "node --no-warnings --experimental-strip-types tests/root-indexer-random-audit.mts",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && electron-vite build",
@@ -56,7 +57,9 @@
       {
         "from": "build/local-ai",
         "to": "local-ai",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

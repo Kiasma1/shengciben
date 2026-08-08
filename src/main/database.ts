@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
@@ -42,6 +42,52 @@ const DEFAULT_SETTINGS: AppSettings = {
 export interface SecretCodec {
   encode(value: string): string
   decode(value: string): string
+}
+
+export interface RestoreStageResult {
+  backupPath: string
+  pendingPath: string
+}
+
+export interface PendingRestore {
+  livePath: string
+  rollbackPath: string | null
+}
+
+const RESTORE_DIRECTORY_NAME = '.restore-pending'
+const DATABASE_FILE_NAME = 'shengciben.sqlite'
+const REQUIRED_RESTORE_TABLES = ['categories', 'settings', 'words']
+
+const restoreDirectory = (directory: string): string => path.join(directory, RESTORE_DIRECTORY_NAME)
+const pendingRestorePath = (directory: string): string => path.join(restoreDirectory(directory), DATABASE_FILE_NAME)
+const removeSqliteSidecars = (filePath: string): void => {
+  for (const suffix of ['-wal', '-shm']) {
+    const sidecar = `${filePath}${suffix}`
+    if (existsSync(sidecar)) unlinkSync(sidecar)
+  }
+}
+
+const validateRestorableDatabase = (filePath: string): void => {
+  let candidate: Database.Database | null = null
+  try {
+    candidate = new Database(filePath, { readonly: true, fileMustExist: true })
+    const integrity = candidate.pragma('integrity_check') as { integrity_check: string }[]
+    if (integrity.length !== 1 || integrity[0]?.integrity_check !== 'ok') {
+      throw new Error('数据库完整性检查未通过。')
+    }
+    const tables = candidate
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${REQUIRED_RESTORE_TABLES.map(() => '?').join(', ')})`)
+      .all(...REQUIRED_RESTORE_TABLES) as { name: string }[]
+    const found = new Set(tables.map((table) => table.name))
+    if (REQUIRED_RESTORE_TABLES.some((table) => !found.has(table))) {
+      throw new Error('所选文件不是有效的生词本 SQLite 备份。')
+    }
+  } catch (error) {
+    if (error instanceof Error && (error.message.includes('完整性检查') || error.message.includes('有效的生词本'))) throw error
+    throw new Error('无法读取所选 SQLite 备份。')
+  } finally {
+    candidate?.close()
+  }
 }
 
 const identitySecretCodec: SecretCodec = {
@@ -220,9 +266,14 @@ export class AppDatabase {
     mkdirSync(directory, { recursive: true })
     this.filePath = path.join(directory, 'shengciben.sqlite')
     this.db = new Database(this.filePath)
-    this.db.pragma('journal_mode = WAL')
-    this.db.pragma('foreign_keys = ON')
-    this.initialize()
+    try {
+      this.db.pragma('journal_mode = WAL')
+      this.db.pragma('foreign_keys = ON')
+      this.initialize()
+    } catch (error) {
+      this.db.close()
+      throw error
+    }
   }
 
   private initialize(): void {
@@ -921,6 +972,88 @@ export class AppDatabase {
 
   async backup(destination: string): Promise<void> {
     await this.db.backup(destination)
+  }
+
+  async stageRestore(sourcePath: string): Promise<RestoreStageResult> {
+    if (path.resolve(sourcePath) === path.resolve(this.filePath)) {
+      throw new Error('当前正在使用的数据库不能作为恢复来源。')
+    }
+    validateRestorableDatabase(sourcePath)
+
+    const backupsDirectory = path.join(this.directory, 'backups')
+    mkdirSync(backupsDirectory, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const backupPath = path.join(backupsDirectory, `shengciben-pre-restore-${stamp}-${randomUUID().slice(0, 8)}.sqlite`)
+    await this.backup(backupPath)
+
+    const pendingDirectory = restoreDirectory(this.directory)
+    const pendingPath = pendingRestorePath(this.directory)
+    rmSync(pendingDirectory, { recursive: true, force: true })
+    mkdirSync(pendingDirectory, { recursive: true })
+
+    let source: Database.Database | null = null
+    try {
+      source = new Database(sourcePath, { readonly: true, fileMustExist: true })
+      await source.backup(pendingPath)
+      source.close()
+      source = null
+
+      const staged = new AppDatabase(pendingDirectory, this.secretCodec)
+      staged.close()
+      validateRestorableDatabase(pendingPath)
+      return { backupPath, pendingPath }
+    } catch (error) {
+      rmSync(pendingDirectory, { recursive: true, force: true })
+      throw error
+    } finally {
+      source?.close()
+    }
+  }
+
+  static applyPendingRestore(directory: string): PendingRestore | null {
+    const pendingPath = pendingRestorePath(directory)
+    if (!existsSync(pendingPath)) return null
+    validateRestorableDatabase(pendingPath)
+
+    const livePath = path.join(directory, DATABASE_FILE_NAME)
+    const rollbackPath = existsSync(livePath)
+      ? path.join(directory, `shengciben-restore-rollback-${randomUUID()}.sqlite`)
+      : null
+
+    try {
+      removeSqliteSidecars(livePath)
+      if (rollbackPath) renameSync(livePath, rollbackPath)
+      renameSync(pendingPath, livePath)
+      validateRestorableDatabase(livePath)
+      return { livePath, rollbackPath }
+    } catch (error) {
+      removeSqliteSidecars(livePath)
+      if (rollbackPath && existsSync(rollbackPath)) {
+        if (existsSync(livePath)) unlinkSync(livePath)
+        renameSync(rollbackPath, livePath)
+      }
+      throw error
+    }
+  }
+
+  static hasPendingRestore(directory: string): boolean {
+    return existsSync(pendingRestorePath(directory))
+  }
+
+  static discardPendingRestore(directory: string): void {
+    rmSync(restoreDirectory(directory), { recursive: true, force: true })
+  }
+
+  static commitPendingRestore(pending: PendingRestore): void {
+    if (pending.rollbackPath && existsSync(pending.rollbackPath)) unlinkSync(pending.rollbackPath)
+    rmSync(restoreDirectory(path.dirname(pending.livePath)), { recursive: true, force: true })
+  }
+
+  static rollbackPendingRestore(pending: PendingRestore): void {
+    removeSqliteSidecars(pending.livePath)
+    if (existsSync(pending.livePath)) unlinkSync(pending.livePath)
+    if (pending.rollbackPath && existsSync(pending.rollbackPath)) renameSync(pending.rollbackPath, pending.livePath)
+    rmSync(restoreDirectory(path.dirname(pending.livePath)), { recursive: true, force: true })
   }
 
   exportSnapshot(): { exportedAt: string; categories: Category[]; words: WordEntry[] } {

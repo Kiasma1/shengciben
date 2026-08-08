@@ -85,6 +85,7 @@ declare global {
       }
       data: {
         openFolder: () => Promise<string>
+        restore: () => Promise<boolean>
         export: (format: ExportFormat) => Promise<boolean>
       }
       onWordsChanged: (listener: () => void) => () => void
