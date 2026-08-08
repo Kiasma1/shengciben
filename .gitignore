@@ -4,3 +4,12 @@ dist/
 release/
 .electron-vite/
 *.log
+
+# Local working artifacts
+/.codegraph/
+/BLOCKED.md
+/PROGRESS.md
+/ai-agent-skills-and-tools/
+/before-v2-overflow.html
+/latin-first-4-weeks.md
+/plans/
