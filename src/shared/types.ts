@@ -2,7 +2,15 @@ export type EnrichmentStatus = 'pending' | 'processing' | 'ready' | 'failed'
 export type RootMatchMode = 'exact' | 'lemma' | 'morpheme' | 'ai'
 export type MorphemeKind = 'prefix' | 'root' | 'suffix'
 export type MorphemeSource = 'dictionary' | 'ai'
+export type ReviewRating = 'again' | 'hard' | 'good' | 'easy'
+export type EntryType = 'word' | 'phrase'
+export type AiProviderMode = 'auto' | 'local' | 'deepseek-first' | 'deepseek'
+export type EnrichmentSource = 'manual' | 'local' | 'deepseek'
 
+export interface PhraseComponent {
+  text: string
+  meaningZh: string
+}
 export interface AiMorpheme {
   kind: MorphemeKind
   form: string
@@ -46,6 +54,12 @@ export interface WordEntry {
   id: string
   word: string
   normalizedWord: string
+  entryType: EntryType
+  phraseType: string
+  phraseComponents: PhraseComponent[]
+  phraseExplanation: string
+  enrichmentSource: EnrichmentSource
+  usageNote: string
   ipaUk: string
   senses: WordSense[]
   categoryId: string
@@ -83,21 +97,30 @@ export interface WordDraft {
 }
 
 export interface AppSettings {
-  aiProvider: 'deepseek'
+  aiProvider: AiProviderMode
   deepseekApiUrl: string
   deepseekModel: string
   deepseekApiKey: string
   dictionaryPath: string
+  dailyNewLimit: number
 }
 
 export interface AppSettingsView {
-  aiProvider: 'deepseek'
+  aiProvider: AiProviderMode
   deepseekApiUrl: string
   deepseekModel: string
   deepseekApiKey: string
   hasDeepseekApiKey: boolean
   clearDeepseekApiKey: boolean
   dictionaryPath: string
+  dailyNewLimit: number
+}
+
+export interface LocalAiStatus {
+  state: 'not_started' | 'preparing' | 'available' | 'error'
+  message: string
+  modelName: string
+  bundled: boolean
 }
 
 export interface DeepSeekStatus {
@@ -107,12 +130,18 @@ export interface DeepSeekStatus {
 }
 
 export interface AiEnrichment {
+  source: Exclude<EnrichmentSource, 'manual'>
+  entryType: EntryType
+  usageNote: string
   ipaUk: string
   senses: WordSense[]
   suggestedCategory: string | null
   tagNames: string[]
   morphemes: AiMorpheme[]
   formationSummary: string
+  phraseType: string
+  phraseComponents: PhraseComponent[]
+  phraseExplanation: string
 }
 
 export interface RootIndexStatus {
@@ -121,6 +150,32 @@ export interface RootIndexStatus {
   updatedAt: string | null
   ready: boolean
   message: string
+}
+
+export interface ReviewOverview {
+  dueCount: number
+  newCount: number
+  todayReviewed: number
+  todayNewReviewed: number
+  dailyNewLimit: number
+}
+
+export interface ReviewQueueItem {
+  entry: WordEntry
+  intervals: Record<ReviewRating, number>
+}
+
+export interface ReviewQueueResult {
+  items: ReviewQueueItem[]
+  dueCount: number
+  newCount: number
+}
+
+export interface ReviewGradeResult {
+  entry: WordEntry
+  rating: ReviewRating
+  nextReviewAt: string
+  intervalMinutes: number
 }
 
 export interface WordCreateResult {

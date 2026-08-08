@@ -19,6 +19,12 @@ const createDatabase = () => {
   }
 }
 
+test('new installations default to automatic split enrichment', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  assert.equal(fixture.database.getSettings().aiProvider, 'auto')
+})
+
 test('createWord 把复数规范为单数并与已有单数去重', (context) => {
   const fixture = createDatabase()
   context.after(fixture.cleanup)
@@ -72,53 +78,20 @@ test('存量词条迁移：规范化并合并撞键词条，幂等', (context) =
   reopened.close()
 })
 
-test('记忆曲线：首次 1 天，按时翻倍，逾期重置，提前不推进', (context) => {
+test('listing and reading words do not change review state', (context) => {
   const fixture = createDatabase()
   context.after(fixture.cleanup)
   const created = fixture.database.createWord('curve')
-  const id = created.entry.id
-  const day = 86400000
+  const raw = new Database(path.join(fixture.directory, 'shengciben.sqlite'))
+  raw.prepare(`UPDATE words SET last_reviewed_at = ?, next_review_at = ?, review_count = ? WHERE id = ?`)
+    .run('2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 4, created.entry.id)
+  raw.close()
 
-  const reviewed = (): { last: number; next: number } => {
-    const entry = fixture.database.getWord(id)
-    assert.ok(entry)
-    return { last: Date.parse(entry.lastReviewedAt ?? ''), next: Date.parse(entry.nextReviewAt ?? '') }
-  }
-  const setTimes = (lastDaysAgo: number, nextDaysFromNow: number): void => {
-    const raw = new Database(path.join(fixture.directory, 'shengciben.sqlite'))
-    raw.prepare(`UPDATE words SET last_reviewed_at = ?, next_review_at = ?, review_count = ? WHERE id = ?`)
-      .run(new Date(Date.now() - lastDaysAgo * day).toISOString(), new Date(Date.now() + nextDaysFromNow * day).toISOString(), 1, id)
-    raw.close()
-  }
-
-  // 首次复习：间隔 1 天
-  fixture.database.recordReview(id)
-  const first = reviewed()
-  assert.ok(Math.abs((first.next - first.last) - day) < 5000)
-
-  // 按时点开（上次间隔 1 天，已到期）：1 → 2 天
-  setTimes(1, 0)
-  fixture.database.recordReview(id)
-  const second = reviewed()
-  assert.ok(Math.abs((second.next - second.last) - 2 * day) < 5000)
-
-  // 按时点开（上次间隔 2 天，已到期）：2 → 4 天
-  setTimes(2, 0)
-  fixture.database.recordReview(id)
-  const third = reviewed()
-  assert.ok(Math.abs((third.next - third.last) - 4 * day) < 5000)
-
-  // 逾期超过一个间隔（last 10 天前，next 6 天前，间隔 4 天）：重置 1 天
-  setTimes(10, -6)
-  fixture.database.recordReview(id)
-  const reset = reviewed()
-  assert.ok(Math.abs((reset.next - reset.last) - day) < 5000)
-
-  // 提前点开（next 在未来 3 天，间隔 4 天）：间隔不推进
-  setTimes(1, 3)
-  fixture.database.recordReview(id)
-  const early = reviewed()
-  assert.ok(Math.abs((early.next - early.last) - 4 * day) < 5000)
+  const before = fixture.database.getWord(created.entry.id)
+  fixture.database.listWords({ query: 'curve' })
+  fixture.database.getWord(created.entry.id)
+  const after = fixture.database.getWord(created.entry.id)
+  assert.deepEqual(after, before)
 })
 
 test('记忆曲线排序：未复习最前，其次最紧迫', (context) => {
@@ -182,6 +155,63 @@ test('AI enrichment is trusted immediately and creates its suggested category', 
   assert.equal(enriched?.categoryName, '学术写作')
   assert.deepEqual(enriched?.senses.map((sense) => sense.definitionZh), ['词汇'])
   assert.deepEqual(enriched?.tags.map((tag) => tag.name), ['考试'])
+})
+
+test('Local source is usable and DeepSeek can enhance it without replacing manual senses', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const created = fixture.database.createWord('elusive')
+  fixture.database.applyEnrichment(created.entry.id, {
+    source: 'local',
+    entryType: 'word',
+    usageNote: '常用于描述难以捕捉的事物。',
+    ipaUk: '',
+    senses: [{ partOfSpeech: 'adj.', definitionZh: '难以捉摸的' }],
+    suggestedCategory: null,
+    tagNames: [],
+    morphemes: [],
+    formationSummary: '',
+    phraseType: '',
+    phraseComponents: [],
+    phraseExplanation: ''
+  })
+  assert.equal(fixture.database.getWord(created.entry.id)?.enrichmentSource, 'local')
+  assert.equal(fixture.database.getWord(created.entry.id)?.usageNote, '常用于描述难以捕捉的事物。')
+
+  fixture.database.applyEnrichment(created.entry.id, {
+    source: 'deepseek',
+    entryType: 'word',
+    usageNote: '高级用法说明',
+    ipaUk: 'ɪˈluːsɪv',
+    senses: [{ partOfSpeech: 'adj.', definitionZh: '难以找到的；难以捉摸的' }],
+    suggestedCategory: null,
+    tagNames: ['高级'],
+    morphemes: [],
+    formationSummary: '',
+    phraseType: '',
+    phraseComponents: [],
+    phraseExplanation: ''
+  })
+  assert.equal(fixture.database.getWord(created.entry.id)?.senses[0]?.definitionZh, '难以找到的；难以捉摸的')
+
+  fixture.database.saveWord({ id: created.entry.id, word: created.entry.word, ipaUk: '人工 IPA', senses: [{ partOfSpeech: 'adj.', definitionZh: '人工释义' }], categoryId: created.entry.categoryId, tagNames: ['人工'] })
+  fixture.database.applyEnrichment(created.entry.id, {
+    source: 'deepseek',
+    entryType: 'word',
+    usageNote: '',
+    ipaUk: '新的 IPA',
+    senses: [{ partOfSpeech: 'adj.', definitionZh: '不应覆盖' }],
+    suggestedCategory: null,
+    tagNames: ['不应覆盖'],
+    morphemes: [],
+    formationSummary: '',
+    phraseType: '',
+    phraseComponents: [],
+    phraseExplanation: ''
+  })
+  const manual = fixture.database.getWord(created.entry.id)
+  assert.equal(manual?.senses[0]?.definitionZh, '人工释义')
+  assert.deepEqual(manual?.tags.map((tag) => tag.name), ['人工'])
 })
 
 test('AI enrichment persists reusable morphemes and the formation summary', (context) => {
@@ -376,13 +406,14 @@ test('legacy review records become ready when the database reopens', (context) =
   assert.equal(migrated?.categoryName, 'AI 分类')
 })
 
-test('legacy Ollama settings migrate to DeepSeek defaults', (context) => {
+test('legacy Ollama settings migrate to automatic split enrichment', (context) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-deepseek-migration-'))
   const first = new AppDatabase(directory)
   first.close()
 
   const raw = new Database(path.join(directory, 'shengciben.sqlite'))
   raw.prepare(`UPDATE settings SET value = 'ollama' WHERE key = 'aiProvider'`).run()
+  raw.prepare(`DELETE FROM settings WHERE key = '_aiProviderRoutingV1'`).run()
   raw.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('ollamaUrl', 'http://127.0.0.1:11434')`).run()
   raw.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('ollamaModel', 'legacy-model')`).run()
   raw.prepare(`DELETE FROM settings WHERE key IN ('deepseekApiUrl', 'deepseekModel', 'deepseekApiKey')`).run()
@@ -395,12 +426,36 @@ test('legacy Ollama settings migrate to DeepSeek defaults', (context) => {
   })
 
   assert.deepEqual(reopened.getSettings(), {
-    aiProvider: 'deepseek',
+    aiProvider: 'auto',
     deepseekApiUrl: 'https://api.deepseek.com',
     deepseekModel: 'deepseek-v4-flash',
     deepseekApiKey: '',
-    dictionaryPath: ''
+    dictionaryPath: '',
+    dailyNewLimit: 20
   })
+})
+
+test('legacy DeepSeek-only defaults migrate once to automatic split enrichment', (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-auto-routing-migration-'))
+  const first = new AppDatabase(directory)
+  first.close()
+
+  const raw = new Database(path.join(directory, 'shengciben.sqlite'))
+  raw.prepare(`UPDATE settings SET value = 'deepseek' WHERE key = 'aiProvider'`).run()
+  raw.prepare(`DELETE FROM settings WHERE key = '_aiProviderRoutingV1'`).run()
+  raw.close()
+
+  const migrated = new AppDatabase(directory)
+  assert.equal(migrated.getSettings().aiProvider, 'auto')
+  migrated.saveSettings({ ...migrated.getSettings(), aiProvider: 'deepseek' })
+  migrated.close()
+
+  const reopened = new AppDatabase(directory)
+  context.after(() => {
+    reopened.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  assert.equal(reopened.getSettings().aiProvider, 'deepseek')
 })
 
 test('DeepSeek API key is encoded at rest and decoded through settings', (context) => {

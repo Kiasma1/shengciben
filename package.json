@@ -1,6 +1,6 @@
 {
   "name": "shengciben",
-  "version": "2.0.0",
+  "version": "2.2.1",
   "description": "DeepSeek AI 生词本",
   "main": "./out/main/index.js",
   "author": "",
@@ -12,7 +12,8 @@
     "test:roots:random": "node --no-warnings --experimental-strip-types tests/root-indexer-random-audit.mts",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && electron-vite build",
-    "build:win": "npm run build && electron-builder --win nsis",
+    "prepare:local-ai": "node scripts/prepare-local-ai.mjs",
+    "build:win": "npm run prepare:local-ai && npm run build && electron-builder --win nsis",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
@@ -46,6 +47,17 @@
     "files": [
       "out/**",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "build/local-ai",
+        "to": "local-ai",
+        "filter": ["**/*"]
+      }
     ],
     "win": {
       "icon": "build/icon.ico",

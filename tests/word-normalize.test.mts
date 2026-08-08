@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { normalizeWordInput } from '../src/main/database.ts'
+import { entryInputError, entryTypeFor } from '../src/shared/entry.ts'
 
 test('规则复数转为单数', () => {
   assert.equal(normalizeWordInput('apples'), 'apple')
@@ -92,6 +93,25 @@ test('去除首尾与多余空格后再转单数', () => {
 test('多词短语保留内部空格', () => {
   assert.equal(normalizeWordInput('apple  juice'), 'apple juice')
   assert.equal(normalizeWordInput('ad hoc'), 'ad hoc')
+})
+
+test('多词短语保守规范化并按 token 判断类型', () => {
+  assert.equal(entryTypeFor(normalizeWordInput('welfare')), 'word')
+  assert.equal(entryTypeFor(normalizeWordInput('  Welfare   Check  ')), 'phrase')
+  assert.equal(normalizeWordInput('  Welfare   Check  '), 'Welfare Check')
+  assert.equal(normalizeWordInput('take care of'), 'take care of')
+  assert.equal(normalizeWordInput("don't give up"), "don't give up")
+  assert.equal(entryTypeFor(normalizeWordInput('mother-in-law')), 'word')
+  assert.equal(entryTypeFor(normalizeWordInput('state-of-the-art')), 'word')
+})
+
+test('词汇输入拒绝超长、中文、非法标点和明显完整句子', () => {
+  assert.match(entryInputError('one two three four five six seven eight nine') ?? '', /最多 8 个词/)
+  assert.match(entryInputError('安危检查') ?? '', /只允许/)
+  assert.match(entryInputError('welfare, check') ?? '', /只允许/)
+  assert.match(entryInputError('I am writing an entire sentence') ?? '', /完整句子/)
+  assert.match(entryInputError("I don't know") ?? '', /完整句子/)
+  assert.equal(entryInputError('on the other hand'), null)
 })
 
 test('默认转小写，专有名词保留大小写', () => {

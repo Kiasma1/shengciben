@@ -1,0 +1,11 @@
+The pinned llama.cpp Windows CPU archive includes libomp140.x86_64.dll.
+
+The LLVM OpenMP runtime is licensed under Apache License 2.0 with LLVM
+Exceptions. The complete Apache license and LLVM exception are bundled beside
+this notice as APACHE-2.0.txt and LLVM-EXCEPTION.txt.
+
+Upstream licensing information:
+https://raw.githubusercontent.com/llvm/llvm-project/main/openmp/LICENSE.TXT
+
+The runtime archive and its original file names are preserved from:
+https://github.com/ggml-org/llama.cpp/releases/tag/b8162

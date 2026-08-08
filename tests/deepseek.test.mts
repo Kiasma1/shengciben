@@ -64,6 +64,7 @@ test('DeepSeek enrichment requests JSON output and parses the vocabulary fields'
     apiKey: 'sk-test',
     model: 'deepseek-v4-flash',
     word: 'conversion',
+    entryType: 'word',
     existingCategories: ['学术写作']
   }, fetcher)
 
@@ -74,6 +75,9 @@ test('DeepSeek enrichment requests JSON output and parses the vocabulary fields'
   assert.equal(requestBody.max_tokens, 8000)
   assert.deepEqual(requestBody.thinking, { type: 'disabled' })
   assert.deepEqual(enrichment, {
+    source: 'deepseek',
+    entryType: 'word',
+    usageNote: '',
     ipaUk: 'kənˈvɜːʃən',
     senses: [{ partOfSpeech: 'noun', definitionZh: '转换；转化' }],
     suggestedCategory: '学术写作',
@@ -83,8 +87,57 @@ test('DeepSeek enrichment requests JSON output and parses the vocabulary fields'
       { kind: 'root', form: 'vers', canonicalForm: 'vert / vers', meaning: '转、转变' },
       { kind: 'suffix', form: '-ion', canonicalForm: '-ion', meaning: '动作、过程或结果' }
     ],
-    formationSummary: 'con-（共同）+ vers（转）+ -ion（名词后缀）→ 转换。'
+    formationSummary: 'con-（共同）+ vers（转）+ -ion（名词后缀）→ 转换。',
+    phraseType: '',
+    phraseComponents: [],
+    phraseExplanation: ''
   })
+})
+
+test('DeepSeek phrase enrichment uses whole-expression schema and validates components', async () => {
+  let requestBody: { messages?: { role?: string; content?: string }[] } = {}
+  const fetcher: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as typeof requestBody
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+      ipaUk: 'ˈwelfeə tʃek',
+      senses: [{ partOfSpeech: 'noun phrase', definitionZh: '完整短语释义' }],
+      suggestedCategory: null,
+      suggestedTags: ['表达'],
+      phraseType: 'noun phrase',
+      phraseComponents: [
+        { text: 'welfare', meaningZh: '组件含义一' },
+        { text: 'check', meaningZh: '组件含义二' }
+      ],
+      phraseExplanation: '完整表达优先的组合说明。'
+    }) } }] }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const enrichment = await enrichWithDeepSeek({
+    baseUrl: 'https://api.deepseek.com', apiKey: 'sk-test', model: 'test',
+    word: 'welfare check', entryType: 'phrase', existingCategories: []
+  }, fetcher)
+
+  assert.equal(enrichment.entryType, 'phrase')
+  assert.equal(enrichment.phraseType, 'noun phrase')
+  assert.equal(enrichment.senses.length, 1)
+  assert.deepEqual(enrichment.morphemes, [])
+  assert.deepEqual(enrichment.phraseComponents.map((component) => component.text), ['welfare', 'check'])
+  assert.match(requestBody.messages?.[0]?.content ?? '', /完整.*表达/)
+})
+
+test('DeepSeek phrase enrichment rejects components absent from the input tokens', async () => {
+  const fetcher: typeof fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+    ipaUk: '',
+    senses: [{ partOfSpeech: 'expression', definitionZh: '整体含义' }],
+    suggestedCategory: null,
+    suggestedTags: [],
+    phraseType: 'expression',
+    phraseComponents: [{ text: 'well', meaningZh: '好' }],
+    phraseExplanation: '整体说明'
+  }) } }] }), { status: 200, headers: { 'content-type': 'application/json' } })
+  await assert.rejects(
+    enrichWithDeepSeek({ baseUrl: 'https://api.deepseek.com', apiKey: 'sk-test', model: 'test', word: 'welfare check', entryType: 'phrase', existingCategories: [] }, fetcher),
+    /无效的短语组成词/
+  )
 })
 
 test('DeepSeek check explains that an API key is required without making a request', async () => {
@@ -203,7 +256,8 @@ test('AI provider registry resolves DeepSeek and checks it with stored settings'
     deepseekApiUrl: 'https://api.deepseek.com',
     deepseekModel: 'deepseek-v4-flash',
     deepseekApiKey: 'sk-test',
-    dictionaryPath: ''
+    dictionaryPath: '',
+    dailyNewLimit: 20
   }), {
     available: true,
     models: ['deepseek-v4-flash'],

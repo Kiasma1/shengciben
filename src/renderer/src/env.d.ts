@@ -5,7 +5,12 @@ import type {
   Category,
   DeepSeekStatus,
   ExportFormat,
+  LocalAiStatus,
   QueueStatus,
+  ReviewGradeResult,
+  ReviewOverview,
+  ReviewQueueResult,
+  ReviewRating,
   RootIndexStatus,
   Tag,
   WordCreateResult,
@@ -13,6 +18,7 @@ import type {
   WordEntry,
   WordFilters
 } from '../../shared/types'
+import type { WordBatchResult } from '../../shared/entry'
 
 declare global {
   interface Window {
@@ -31,15 +37,25 @@ declare global {
         close: () => void
         onMaximizedChanged: (listener: (maximized: boolean) => void) => () => void
       }
+      quickCapture: {
+        submit: (text: string, sourceName?: string) => Promise<WordBatchResult>
+        hide: () => void
+        onPrefill: (listener: (text: string) => void) => () => void
+      }
       words: {
         list: (filters: WordFilters) => Promise<WordEntry[]>
         get: (id: string) => Promise<WordEntry | null>
+        getByNormalized: (word: string) => Promise<WordEntry | null>
         create: (word: string) => Promise<WordCreateResult>
         save: (draft: WordDraft) => Promise<WordEntry>
         trash: (id: string) => Promise<void>
         restore: (id: string) => Promise<void>
-        review: (id: string) => Promise<void>
         emptyTrash: () => Promise<number>
+      }
+      reviews: {
+        overview: () => Promise<ReviewOverview>
+        queue: () => Promise<ReviewQueueResult>
+        grade: (id: string, rating: ReviewRating) => Promise<ReviewGradeResult>
       }
       categories: {
         list: () => Promise<Category[]>
@@ -51,7 +67,10 @@ declare global {
         get: () => Promise<AppSettingsView>
         save: (settings: AppSettingsView) => Promise<AppSettingsView>
       }
-      deepseek: { check: (settings: AppSettingsView) => Promise<DeepSeekStatus> }
+      localAi: {
+        status: () => Promise<LocalAiStatus>
+      },
+      deepseek: { check: (settings: AppSettingsView) => Promise<DeepSeekStatus> },
       queue: {
         status: () => Promise<QueueStatus>
         setPaused: (paused: boolean) => Promise<QueueStatus>

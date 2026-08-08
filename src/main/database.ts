@@ -8,25 +8,35 @@ import type {
   AiMorpheme,
   Category,
   EnrichmentStatus,
+  EnrichmentSource,
+  EntryType,
   QueueStatus,
   RootMatch,
+  ReviewGradeResult,
+  ReviewOverview,
+  ReviewQueueItem,
+  ReviewQueueResult,
+  ReviewRating,
   Tag,
   WordCreateResult,
   WordDraft,
   WordEntry,
   WordFilters,
-  WordSense
+  WordSense,
+  PhraseComponent
 } from '../shared/types'
+import { entryInputError, entryTypeFor, filterPhraseComponents, normalizeEntryWhitespace, validatePhraseComponents } from '../shared/entry.ts'
 import pluralize from 'pluralize'
 
 const UNCATEGORIZED_ID = 'uncategorized'
 const MORPHOLOGY_VERSION = 1
 const DEFAULT_SETTINGS: AppSettings = {
-  aiProvider: 'deepseek',
+  aiProvider: 'auto',
   deepseekApiUrl: 'https://api.deepseek.com',
   deepseekModel: 'deepseek-v4-flash',
   deepseekApiKey: '',
-  dictionaryPath: ''
+  dictionaryPath: '',
+  dailyNewLimit: 20
 }
 
 export interface SecretCodec {
@@ -43,6 +53,12 @@ type WordRow = {
   id: string
   word: string
   normalized_word: string
+  entry_type: EntryType
+  phrase_type: string
+  phrase_components_json: string
+  phrase_explanation: string
+  usage_note: string
+  enrichment_source: EnrichmentSource
   ipa_uk: string
   category_id: string
   category_name: string
@@ -61,6 +77,60 @@ type WordRow = {
 
 const now = (): string => new Date().toISOString()
 const normalizeWord = (value: string): string => value.trim().toLocaleLowerCase('en-US')
+
+const MINUTES_PER_DAY = 24 * 60
+const MAX_REVIEW_INTERVAL_MINUTES = 365 * MINUTES_PER_DAY
+const REVIEW_RATINGS: ReviewRating[] = ['again', 'hard', 'good', 'easy']
+const INITIAL_REVIEW_INTERVALS: Record<ReviewRating, number> = {
+  again: 10,
+  hard: MINUTES_PER_DAY,
+  good: 2 * MINUTES_PER_DAY,
+  easy: 4 * MINUTES_PER_DAY
+}
+
+export const normalizeDailyNewLimit = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value), 10)
+  return Number.isFinite(parsed) ? Math.min(100, Math.max(0, Math.trunc(parsed))) : DEFAULT_SETTINGS.dailyNewLimit
+}
+
+const isReviewRating = (value: string): value is ReviewRating => REVIEW_RATINGS.includes(value as ReviewRating)
+
+export const calculateReviewIntervals = (previousIntervalMinutes: number | null): Record<ReviewRating, number> => {
+  if (!previousIntervalMinutes || previousIntervalMinutes < 1) return { ...INITIAL_REVIEW_INTERVALS }
+  return {
+    again: 10,
+    hard: Math.min(MAX_REVIEW_INTERVAL_MINUTES, Math.max(MINUTES_PER_DAY, Math.round(previousIntervalMinutes * 1.2))),
+    good: Math.min(MAX_REVIEW_INTERVAL_MINUTES, Math.max(2 * MINUTES_PER_DAY, Math.round(previousIntervalMinutes * 2.5))),
+    easy: Math.min(MAX_REVIEW_INTERVAL_MINUTES, Math.max(4 * MINUTES_PER_DAY, Math.round(previousIntervalMinutes * 4)))
+  }
+}
+
+export const calculateNextReview = (
+  previousIntervalMinutes: number | null,
+  rating: ReviewRating,
+  reviewedAt: Date = new Date()
+): { nextReviewAt: string; intervalMinutes: number } => {
+  if (!isReviewRating(rating)) throw new Error('复习评分无效。')
+  const intervalMinutes = calculateReviewIntervals(previousIntervalMinutes)[rating]
+  return {
+    nextReviewAt: new Date(reviewedAt.getTime() + intervalMinutes * 60_000).toISOString(),
+    intervalMinutes
+  }
+}
+
+const localDayBounds = (date = new Date()): { start: string; end: string } => {
+  const start = new Date(date)
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(start)
+  end.setDate(end.getDate() + 1)
+  return { start: start.toISOString(), end: end.toISOString() }
+}
+
+const previousIntervalMinutes = (lastReviewedAt: string | null, nextReviewAt: string | null): number | null => {
+  if (!lastReviewedAt || !nextReviewAt) return null
+  const interval = Math.round((Date.parse(nextReviewAt) - Date.parse(lastReviewedAt)) / 60_000)
+  return Number.isFinite(interval) && interval > 0 ? interval : null
+}
 
 // pluralize 库的规则覆盖不了的词，手动修正
 const PLURAL_OVERRIDES: Record<string, string> = {
@@ -123,12 +193,12 @@ const PROPER_NOUNS = new Set([
 ])
 
 /**
- * 规范用户输入的单词：去除首尾与多余空格；字母默认全部转小写，
+ * 规范用户输入的词汇：去除首尾与多余空格；字母默认全部转小写，
  * 专有名词（国家、语言、民族、主要城市、月份、星期等）保留用户输入的大小写；
- * 单个单词自动把复数转为单数。多词短语（如 "ad hoc"）保留内部空格，原样返回。
+ * 单个单词自动把复数转为单数。多词短语只保留空白规范，不做单复数归一化。
  */
 export const normalizeWordInput = (raw: string): string => {
-  const cleaned = raw.trim().replace(/\s+/g, ' ')
+  const cleaned = normalizeEntryWhitespace(raw)
   if (cleaned.includes(' ')) return cleaned
   const lower = cleaned.toLocaleLowerCase('en-US')
   if (PROPER_NOUNS.has(lower)) return cleaned
@@ -172,7 +242,14 @@ export class AppDatabase {
         id TEXT PRIMARY KEY,
         word TEXT NOT NULL,
         normalized_word TEXT NOT NULL UNIQUE,
-        ipa_uk TEXT NOT NULL DEFAULT '',
+        entry_type TEXT NOT NULL DEFAULT 'word' CHECK (entry_type IN ('word', 'phrase')),
+        phrase_type TEXT NOT NULL DEFAULT '',
+        phrase_components_json TEXT NOT NULL DEFAULT '[]',
+        phrase_explanation TEXT NOT NULL DEFAULT '',
+	        usage_note TEXT NOT NULL DEFAULT '',
+	        enrichment_source TEXT NOT NULL DEFAULT 'manual' CHECK (enrichment_source IN ('manual', 'local', 'deepseek')),
+	        learning_fields_manual INTEGER NOT NULL DEFAULT 0,
+	        ipa_uk TEXT NOT NULL DEFAULT '',
         category_id TEXT NOT NULL REFERENCES categories(id),
         enrichment_status TEXT NOT NULL DEFAULT 'pending',
         ai_error TEXT,
@@ -226,8 +303,20 @@ export class AppDatabase {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS review_events (
+        id TEXT PRIMARY KEY,
+        word_id TEXT NOT NULL REFERENCES words(id) ON DELETE CASCADE,
+        rating TEXT NOT NULL CHECK (rating IN ('again', 'hard', 'good', 'easy')),
+        reviewed_at TEXT NOT NULL,
+        previous_next_review_at TEXT,
+        next_review_at TEXT NOT NULL,
+        interval_minutes INTEGER NOT NULL,
+        was_new INTEGER NOT NULL DEFAULT 0
+      );
       CREATE INDEX IF NOT EXISTS idx_words_active_updated ON words(is_deleted, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_review_events_word_reviewed ON review_events(word_id, reviewed_at);
+      CREATE INDEX IF NOT EXISTS idx_review_events_reviewed_at ON review_events(reviewed_at);
     `)
 
     const rootColumns = this.db.pragma('table_info(root_matches)') as { name: string }[]
@@ -259,6 +348,39 @@ export class AppDatabase {
       this.db.exec(`ALTER TABLE words ADD COLUMN morphology_version INTEGER NOT NULL DEFAULT 0`)
     }
     const reviewColumns = this.db.pragma('table_info(words)') as { name: string }[]
+    if (!reviewColumns.some((column) => column.name === 'entry_type')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'word'`)
+    }
+    if (!reviewColumns.some((column) => column.name === 'phrase_type')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN phrase_type TEXT NOT NULL DEFAULT ''`)
+    }
+    if (!reviewColumns.some((column) => column.name === 'phrase_components_json')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN phrase_components_json TEXT NOT NULL DEFAULT '[]'`)
+    }
+    if (!reviewColumns.some((column) => column.name === 'phrase_explanation')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN phrase_explanation TEXT NOT NULL DEFAULT ''`)
+    }
+    if (!reviewColumns.some((column) => column.name === 'usage_note')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN usage_note TEXT NOT NULL DEFAULT ''`)
+    }
+	    if (!reviewColumns.some((column) => column.name === 'enrichment_source')) {
+	      this.db.exec(`ALTER TABLE words ADD COLUMN enrichment_source TEXT NOT NULL DEFAULT 'manual'`)
+	    }
+	    const needsManualLearningFieldsBackfill = !reviewColumns.some((column) => column.name === 'learning_fields_manual')
+	    if (needsManualLearningFieldsBackfill) {
+	      this.db.exec(`ALTER TABLE words ADD COLUMN learning_fields_manual INTEGER NOT NULL DEFAULT 0`)
+	    }
+	    this.db.prepare(`UPDATE words SET entry_type = 'word' WHERE entry_type IS NULL OR entry_type NOT IN ('word', 'phrase')`).run()
+	    this.db.prepare(`UPDATE words SET enrichment_source = 'manual' WHERE enrichment_source IS NULL OR enrichment_source NOT IN ('manual', 'local', 'deepseek')`).run()
+	    if (needsManualLearningFieldsBackfill) {
+	      this.db.prepare(`
+	        UPDATE words SET learning_fields_manual = 1
+	        WHERE enrichment_source = 'manual' AND (
+	          EXISTS (SELECT 1 FROM senses WHERE senses.word_id = words.id) OR
+	          EXISTS (SELECT 1 FROM word_tags WHERE word_tags.word_id = words.id)
+	        )
+	      `).run()
+	    }
     if (!reviewColumns.some((column) => column.name === 'last_reviewed_at')) {
       this.db.exec(`ALTER TABLE words ADD COLUMN last_reviewed_at TEXT`)
     }
@@ -286,7 +408,11 @@ export class AppDatabase {
     }
 
     this.db.transaction(() => {
-      this.db.prepare(`UPDATE settings SET value = 'deepseek' WHERE key = 'aiProvider'`).run()
+      const routingMigration = this.db.prepare(`SELECT value FROM settings WHERE key = '_aiProviderRoutingV1'`).get()
+      if (!routingMigration) {
+        this.db.prepare(`UPDATE settings SET value = 'auto' WHERE key = 'aiProvider' AND value IN ('deepseek', 'ollama')`).run()
+        this.db.prepare(`INSERT INTO settings (key, value) VALUES ('_aiProviderRoutingV1', 'done')`).run()
+      }
       this.db.prepare(`DELETE FROM settings WHERE key IN ('ollamaUrl', 'ollamaModel')`).run()
       this.db.prepare(`UPDATE tasks SET status = 'pending', error = NULL, updated_at = ? WHERE status = 'processing'`).run(now())
       this.db.prepare(`UPDATE words SET enrichment_status = 'pending', ai_error = NULL, updated_at = ? WHERE enrichment_status = 'processing'`).run(now())
@@ -372,7 +498,7 @@ export class AppDatabase {
     }
     if (filters.query?.trim()) {
       clauses.push(`(
-        lower(w.word) LIKE @query OR lower(w.ipa_uk) LIKE @query OR lower(w.formation_summary) LIKE @query OR lower(c.name) LIKE @query OR
+        lower(w.word) LIKE @query OR lower(w.ipa_uk) LIKE @query OR lower(w.phrase_type) LIKE @query OR lower(w.phrase_components_json) LIKE @query OR lower(w.phrase_explanation) LIKE @query OR lower(w.formation_summary) LIKE @query OR lower(c.name) LIKE @query OR
         EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND (lower(s.part_of_speech) LIKE @query OR lower(s.definition_zh) LIKE @query)) OR
         EXISTS (SELECT 1 FROM word_tags wt JOIN tags t ON t.id = wt.tag_id WHERE wt.word_id = w.id AND lower(t.name) LIKE @query) OR
         EXISTS (SELECT 1 FROM root_matches rm WHERE rm.word_id = w.id AND (lower(rm.root) LIKE @query OR lower(rm.surface_form) LIKE @query OR lower(rm.meaning) LIKE @query OR lower(rm.formation_note) LIKE @query))
@@ -395,7 +521,7 @@ export class AppDatabase {
   }
 
   listRootRefreshTargets(): { id: string; word: string }[] {
-    return this.db.prepare('SELECT id, word FROM words').all() as { id: string; word: string }[]
+    return this.db.prepare(`SELECT id, word FROM words WHERE entry_type = 'word'`).all() as { id: string; word: string }[]
   }
 
   getWord(id: string): WordEntry | null {
@@ -408,12 +534,24 @@ export class AppDatabase {
     return row ? this.hydrateWord(row) : null
   }
 
+  getWordByNormalized(rawWord: string): WordEntry | null {
+    const normalized = normalizeWord(normalizeWordInput(rawWord))
+    const row = this.db
+      .prepare(`
+        SELECT w.*, c.name AS category_name, c.color AS category_color
+        FROM words w JOIN categories c ON c.id = w.category_id
+        WHERE w.normalized_word = ? AND w.is_deleted = 0
+      `)
+      .get(normalized) as WordRow | undefined
+    return row ? this.hydrateWord(row) : null
+  }
+
   createWord(rawWord: string): WordCreateResult {
     const word = normalizeWordInput(rawWord)
+    const inputError = entryInputError(word)
+    if (inputError) throw new Error(inputError)
+    const entryType = entryTypeFor(word)
     const normalizedWord = normalizeWord(word)
-    if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(word)) {
-      throw new Error('请输入单个英文单词；可包含连字符或撇号。')
-    }
 
     const existing = this.db.prepare('SELECT id FROM words WHERE normalized_word = ?').get(normalizedWord) as { id: string } | undefined
     if (existing) {
@@ -426,9 +564,9 @@ export class AppDatabase {
     const createdAt = now()
     const insert = this.db.transaction(() => {
       this.db
-        .prepare(`INSERT INTO words (id, word, normalized_word, category_id, enrichment_status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, 'pending', ?, ?)`)
-        .run(id, word, normalizedWord, UNCATEGORIZED_ID, createdAt, createdAt)
+        .prepare(`INSERT INTO words (id, word, normalized_word, entry_type, category_id, enrichment_status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`)
+        .run(id, word, normalizedWord, entryType, UNCATEGORIZED_ID, createdAt, createdAt)
       this.db
         .prepare(`INSERT INTO tasks (id, word_id, status, priority, created_at, updated_at) VALUES (?, ?, 'pending', 100, ?, ?)`)
         .run(randomUUID(), id, createdAt, createdAt)
@@ -440,9 +578,14 @@ export class AppDatabase {
   }
 
   saveWord(draft: WordDraft): WordEntry {
-    const word = draft.word.trim()
+    const word = normalizeWordInput(draft.word)
+    const inputError = entryInputError(word)
+    if (inputError) throw new Error(inputError)
+    const entryType = entryTypeFor(word)
     const normalizedWord = normalizeWord(word)
-    if (!/^[a-z]+(?:[-'][a-z]+)*$/i.test(word)) throw new Error('请输入单个英文单词；可包含连字符或撇号。')
+    const current = this.getWord(draft.id)
+    if (!current) throw new Error('保存词条失败。')
+    const identityChanged = current.entryType !== entryType || current.normalizedWord !== normalizedWord
     if (!this.db.prepare('SELECT id FROM categories WHERE id = ?').get(draft.categoryId)) throw new Error('所选分类不存在。')
 
     const cleanSenses = draft.senses
@@ -453,26 +596,34 @@ export class AppDatabase {
     const update = this.db.transaction(() => {
       try {
         this.db
-          .prepare(`UPDATE words SET word = ?, normalized_word = ?, ipa_uk = ?, category_id = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
+	          .prepare(`UPDATE words SET word = ?, normalized_word = ?, entry_type = ?, ipa_uk = ?, usage_note = ?, enrichment_source = 'manual', learning_fields_manual = 1, category_id = ?, enrichment_status = '${identityChanged ? 'pending' : 'ready'}', ai_error = NULL, ai_reviewed = ${identityChanged ? 0 : 1}, suggested_category = NULL, updated_at = ? WHERE id = ?`)
           .run(
             word,
             normalizedWord,
+            entryType,
             draft.ipaUk.trim(),
+            identityChanged ? '' : current.usageNote,
             draft.categoryId,
             now(),
             draft.id
           )
       } catch (error) {
-        if (error instanceof Error && error.message.includes('UNIQUE')) throw new Error('该单词已存在。')
+        if (error instanceof Error && error.message.includes('UNIQUE')) throw new Error('该词汇已存在。')
         throw error
+      }
+      if (identityChanged) {
+        this.db.prepare(`UPDATE words SET ai_morphemes_json = '[]', formation_summary = '', phrase_type = '', phrase_components_json = '[]', phrase_explanation = '' WHERE id = ?`).run(draft.id)
+        this.db.prepare('DELETE FROM root_matches WHERE word_id = ?').run(draft.id)
+        this.db.prepare(`UPDATE tasks SET status = 'pending', priority = 100, retry_count = 0, error = NULL, updated_at = ? WHERE word_id = ?`).run(now(), draft.id)
+      } else {
+        this.db.prepare(`UPDATE tasks SET status = 'completed', error = NULL, updated_at = ? WHERE word_id = ?`).run(now(), draft.id)
       }
       this.replaceSenses(draft.id, cleanSenses)
       this.replaceTags(draft.id, draft.tagNames)
-      this.db.prepare(`UPDATE tasks SET status = 'completed', error = NULL, updated_at = ? WHERE word_id = ?`).run(now(), draft.id)
     })
     update()
     const entry = this.getWord(draft.id)
-    if (!entry) throw new Error('保存单词失败。')
+    if (!entry) throw new Error('保存词条失败。')
     return entry
   }
 
@@ -484,31 +635,80 @@ export class AppDatabase {
     this.db.prepare(`UPDATE words SET is_deleted = 0, deleted_at = NULL, updated_at = ? WHERE id = ?`).run(now(), id)
   }
 
-  // 简化记忆曲线间隔（天）：首次 1，按时翻倍，逾期重置，封顶 30
-  recordReview(id: string): void {
-    const row = this.db
-      .prepare(`SELECT last_reviewed_at, review_count, next_review_at FROM words WHERE id = ?`)
-      .get(id) as { last_reviewed_at: string | null; review_count: number; next_review_at: string | null } | undefined
-    if (!row) return
-    const timestamp = now()
-    let intervalDays = 1
-    if (row.next_review_at && row.review_count > 0) {
-      const nowMs = Date.parse(timestamp)
-      const nextMs = Date.parse(row.next_review_at)
-      const lastMs = Date.parse(row.last_reviewed_at ?? timestamp)
-      const lastIntervalDays = Math.max(1, Math.round((nextMs - lastMs) / 86400000))
-      if (nowMs >= nextMs) {
-        // 按时或逾期：逾期超过一个间隔（宽限期）则重置，否则翻倍
-        intervalDays = nowMs > nextMs + lastIntervalDays * 86400000 ? 1 : Math.min(30, lastIntervalDays * 2)
-      } else {
-        // 提前点开：只刷新上次复习时间，不推进间隔
-        intervalDays = lastIntervalDays
-      }
+  private listReviewEntries(kind: 'due' | 'new', limit?: number): WordEntry[] {
+    const condition = kind === 'due' ? 'w.next_review_at IS NOT NULL AND w.next_review_at <= @now' : 'w.next_review_at IS NULL'
+    const order = kind === 'due' ? 'w.next_review_at ASC, w.created_at ASC' : 'w.created_at ASC'
+    const limitClause = limit === undefined ? '' : ' LIMIT @limit'
+    const rows = this.db
+      .prepare(`
+        SELECT w.*, c.name AS category_name, c.color AS category_color
+        FROM words w JOIN categories c ON c.id = w.category_id
+        WHERE w.is_deleted = 0 AND ${condition}
+          AND EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND trim(s.definition_zh) <> '')
+        ORDER BY ${order}${limitClause}
+      `)
+      .all(limit === undefined ? { now: now() } : { now: now(), limit }) as WordRow[]
+    return rows.map((row) => this.hydrateWord(row))
+  }
+
+  getReviewOverview(): ReviewOverview {
+    const bounds = localDayBounds()
+    const today = this.db
+      .prepare(`SELECT count(*) AS todayReviewed, coalesce(sum(CASE WHEN was_new = 1 THEN 1 ELSE 0 END), 0) AS todayNewReviewed FROM review_events WHERE reviewed_at >= ? AND reviewed_at < ?`)
+      .get(bounds.start, bounds.end) as { todayReviewed: number; todayNewReviewed: number }
+    const dueCount = this.db
+      .prepare(`SELECT count(*) AS count FROM words w WHERE w.is_deleted = 0 AND w.next_review_at IS NOT NULL AND w.next_review_at <= ? AND EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND trim(s.definition_zh) <> '')`)
+      .get(now()) as { count: number }
+    const newEligibleCount = this.db
+      .prepare(`SELECT count(*) AS count FROM words w WHERE w.is_deleted = 0 AND w.next_review_at IS NULL AND EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND trim(s.definition_zh) <> '')`)
+      .get() as { count: number }
+    const dailyNewLimit = this.getSettings().dailyNewLimit
+    return {
+      dueCount: dueCount.count,
+      newCount: Math.min(newEligibleCount.count, Math.max(0, dailyNewLimit - today.todayNewReviewed)),
+      todayReviewed: today.todayReviewed,
+      todayNewReviewed: today.todayNewReviewed,
+      dailyNewLimit
     }
-    const nextReview = new Date(Date.parse(timestamp) + intervalDays * 86400000).toISOString()
-    this.db
-      .prepare(`UPDATE words SET last_reviewed_at = ?, review_count = review_count + 1, next_review_at = ?, updated_at = ? WHERE id = ?`)
-      .run(timestamp, nextReview, timestamp, id)
+  }
+
+  getReviewQueue(): ReviewQueueResult {
+    const overview = this.getReviewOverview()
+    const entries = [...this.listReviewEntries('due'), ...this.listReviewEntries('new', overview.newCount)]
+    const items: ReviewQueueItem[] = entries.map((entry) => ({
+      entry,
+      intervals: calculateReviewIntervals(previousIntervalMinutes(entry.lastReviewedAt, entry.nextReviewAt))
+    }))
+    return { items, dueCount: overview.dueCount, newCount: Math.max(0, items.length - overview.dueCount) }
+  }
+
+  gradeReview(id: string, rating: ReviewRating): ReviewGradeResult {
+    if (!isReviewRating(rating)) throw new Error('复习评分无效。')
+    const result = this.db.transaction(() => {
+      const row = this.db
+        .prepare(`
+          SELECT w.last_reviewed_at, w.next_review_at, w.review_count, w.is_deleted,
+            EXISTS (SELECT 1 FROM senses s WHERE s.word_id = w.id AND trim(s.definition_zh) <> '') AS has_definition
+          FROM words w WHERE w.id = ?
+        `)
+        .get(id) as { last_reviewed_at: string | null; next_review_at: string | null; review_count: number; is_deleted: number; has_definition: number } | undefined
+      if (!row || row.is_deleted || !row.has_definition) throw new Error('该单词当前不可复习。')
+      if (row.next_review_at && Number.isFinite(Date.parse(row.next_review_at)) && Date.parse(row.next_review_at) > Date.now()) {
+        throw new Error('该单词尚未到复习时间。')
+      }
+      const reviewedAt = now()
+      const calculated = calculateNextReview(previousIntervalMinutes(row.last_reviewed_at, row.next_review_at), rating, new Date(reviewedAt))
+      this.db
+        .prepare(`INSERT INTO review_events (id, word_id, rating, reviewed_at, previous_next_review_at, next_review_at, interval_minutes, was_new) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(randomUUID(), id, rating, reviewedAt, row.next_review_at, calculated.nextReviewAt, calculated.intervalMinutes, row.next_review_at === null ? 1 : 0)
+      this.db
+        .prepare(`UPDATE words SET last_reviewed_at = ?, review_count = review_count + 1, next_review_at = ?, updated_at = ? WHERE id = ?`)
+        .run(reviewedAt, calculated.nextReviewAt, reviewedAt, id)
+      return calculated
+    })()
+    const entry = this.getWord(id)
+    if (!entry) throw new Error('复习后读取单词失败。')
+    return { entry, rating, ...result }
   }
 
   emptyTrash(): number {
@@ -556,6 +756,7 @@ export class AppDatabase {
     const rows = this.db.prepare(`SELECT key, value FROM settings WHERE substr(key, 1, 1) <> '_'`).all() as { key: keyof AppSettings; value: string }[]
     const entries = rows.map((row) => [row.key, row.value])
     const settings = { ...DEFAULT_SETTINGS, ...Object.fromEntries(entries) } as AppSettings
+    settings.dailyNewLimit = normalizeDailyNewLimit(settings.dailyNewLimit)
     settings.deepseekApiKey = settings.deepseekApiKey ? this.secretCodec.decode(settings.deepseekApiKey) : ''
     return settings
   }
@@ -564,7 +765,7 @@ export class AppDatabase {
     const statement = this.db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
     const transaction = this.db.transaction(() => {
       for (const [key, value] of Object.entries(settings)) {
-        const cleanValue = value.trim()
+        const cleanValue = key === 'dailyNewLimit' ? String(normalizeDailyNewLimit(value)) : String(value).trim()
         statement.run(key, key === 'deepseekApiKey' && cleanValue ? this.secretCodec.encode(cleanValue) : cleanValue)
       }
     })
@@ -641,7 +842,8 @@ export class AppDatabase {
   applyEnrichment(wordId: string, result: AiEnrichment): void {
     const transaction = this.db.transaction(() => {
       const current = this.getWord(wordId)
-      let categoryId = current?.categoryId && current.categoryId !== UNCATEGORIZED_ID ? current.categoryId : UNCATEGORIZED_ID
+      if (!current) throw new Error('待处理词条不存在。')
+      let categoryId = current.categoryId && current.categoryId !== UNCATEGORIZED_ID ? current.categoryId : UNCATEGORIZED_ID
       const categoryName = result.suggestedCategory?.trim()
       if (categoryId === UNCATEGORIZED_ID && categoryName) {
         this.db
@@ -651,22 +853,35 @@ export class AppDatabase {
           this.db.prepare('SELECT id FROM categories WHERE name = ? COLLATE NOCASE').get(categoryName) as { id: string }
         ).id
       }
+	      const source = result.source ?? 'deepseek'
+	      const ownership = this.db.prepare('SELECT learning_fields_manual AS manual FROM words WHERE id = ?').get(wordId) as { manual: number }
+      const phrase = current.entryType === 'phrase'
+      const phraseComponents = phrase
+        ? source === 'local'
+          ? filterPhraseComponents(current.word, result.phraseComponents ?? [])
+          : validatePhraseComponents(current.word, result.phraseComponents ?? [])
+        : []
       this.db
-        .prepare(`UPDATE words SET ipa_uk = ?, category_id = ?, ai_morphemes_json = ?, formation_summary = ?, morphology_version = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
+        .prepare(`UPDATE words SET ipa_uk = ?, usage_note = ?, enrichment_source = ?, category_id = ?, ai_morphemes_json = ?, formation_summary = ?, phrase_type = ?, phrase_components_json = ?, phrase_explanation = ?, morphology_version = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
         .run(
-          result.ipaUk,
+          result.ipaUk?.trim() || current.ipaUk,
+          phrase ? '' : result.usageNote?.trim() ?? '',
+          source,
           categoryId,
-          JSON.stringify(result.morphemes ?? []),
-          result.formationSummary?.trim() ?? '',
+          JSON.stringify(phrase ? [] : result.morphemes ?? []),
+          phrase ? '' : result.formationSummary?.trim() ?? '',
+          phrase ? result.phraseType?.trim() ?? '' : '',
+          JSON.stringify(phraseComponents),
+          phrase ? result.phraseExplanation?.trim() ?? '' : '',
           MORPHOLOGY_VERSION,
           now(),
           wordId
         )
-      // 已有义项说明内容来自人工编辑或上一轮 AI，重新分析只更新词素/IPA/分类，
-      // 不覆盖释义与标签，避免丢失用户数据。
-      if (!current?.senses.length) {
-        this.replaceSenses(wordId, result.senses)
-        this.replaceTags(wordId, result.tagNames)
+	      // Local 结果可以被后续 DeepSeek 增强；人工编辑的释义/标签在完整重分析链中始终保持不动。
+	      const replaceLearningFields = !ownership.manual && (!current.senses.length || (current.enrichmentSource === 'local' && source === 'deepseek'))
+      if (replaceLearningFields) {
+        this.replaceSenses(wordId, result.senses ?? [])
+        this.replaceTags(wordId, result.tagNames ?? [])
       }
     })
     transaction()
@@ -755,10 +970,23 @@ export class AppDatabase {
     } catch {
       // Corrupt optional analysis data must not block access to the wordbook.
     }
+    let phraseComponents: PhraseComponent[] = []
+    try {
+      const parsed = JSON.parse(row.phrase_components_json) as unknown
+      if (Array.isArray(parsed)) phraseComponents = parsed as PhraseComponent[]
+    } catch {
+      // Corrupt optional phrase analysis must not block access to the vocabulary.
+    }
     return {
       id: row.id,
       word: row.word,
       normalizedWord: row.normalized_word,
+      entryType: row.entry_type === 'phrase' ? 'phrase' : 'word',
+      phraseType: row.phrase_type ?? '',
+      phraseComponents,
+      phraseExplanation: row.phrase_explanation ?? '',
+      enrichmentSource: row.enrichment_source === 'local' || row.enrichment_source === 'deepseek' ? row.enrichment_source : 'manual',
+      usageNote: row.usage_note ?? '',
       ipaUk: row.ipa_uk,
       senses,
       categoryId: row.category_id,
