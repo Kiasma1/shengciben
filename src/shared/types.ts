@@ -4,6 +4,8 @@ export type MorphemeKind = 'prefix' | 'root' | 'suffix'
 export type MorphemeSource = 'dictionary' | 'ai'
 export type ReviewRating = 'again' | 'hard' | 'good' | 'easy'
 export type EntryType = 'word' | 'phrase'
+export type AiProviderMode = 'auto' | 'local' | 'deepseek-first' | 'deepseek'
+export type EnrichmentSource = 'manual' | 'local' | 'deepseek'
 
 export interface PhraseComponent {
   text: string
@@ -56,6 +58,8 @@ export interface WordEntry {
   phraseType: string
   phraseComponents: PhraseComponent[]
   phraseExplanation: string
+  enrichmentSource: EnrichmentSource
+  usageNote: string
   ipaUk: string
   senses: WordSense[]
   categoryId: string
@@ -93,7 +97,7 @@ export interface WordDraft {
 }
 
 export interface AppSettings {
-  aiProvider: 'deepseek'
+  aiProvider: AiProviderMode
   deepseekApiUrl: string
   deepseekModel: string
   deepseekApiKey: string
@@ -102,7 +106,7 @@ export interface AppSettings {
 }
 
 export interface AppSettingsView {
-  aiProvider: 'deepseek'
+  aiProvider: AiProviderMode
   deepseekApiUrl: string
   deepseekModel: string
   deepseekApiKey: string
@@ -112,6 +116,13 @@ export interface AppSettingsView {
   dailyNewLimit: number
 }
 
+export interface LocalAiStatus {
+  state: 'not_started' | 'preparing' | 'available' | 'error'
+  message: string
+  modelName: string
+  bundled: boolean
+}
+
 export interface DeepSeekStatus {
   available: boolean
   models: string[]
@@ -119,7 +130,9 @@ export interface DeepSeekStatus {
 }
 
 export interface AiEnrichment {
+  source: Exclude<EnrichmentSource, 'manual'>
   entryType: EntryType
+  usageNote: string
   ipaUk: string
   senses: WordSense[]
   suggestedCategory: string | null

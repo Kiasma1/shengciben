@@ -21,11 +21,37 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Cache Local AI artifacts
+        uses: actions/cache@v4
+        with:
+          path: build/.local-ai-cache
+          key: local-ai-${{ runner.os }}-qwen3-0.6b-q8_0-${{ hashFiles('scripts/prepare-local-ai.mjs') }}
+
       - name: Install dependencies
         run: npm ci
 
+      - name: Require Windows signing certificate
+        shell: pwsh
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CSC_LINK)) { throw 'Missing WINDOWS_CERTIFICATE_BASE64 secret.' }
+          if ([string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)) { throw 'Missing WINDOWS_CERTIFICATE_PASSWORD secret.' }
+
       - name: Package installer
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: npm run build:win -- --publish never
+
+      - name: Verify installer signature
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $installer = "release/shengciben-setup-$version.exe"
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'Valid') { throw "Installer signature is $($signature.Status), expected Valid." }
 
       - name: Create or update release
         env:

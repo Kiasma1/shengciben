@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, safeStorage, screen, shell, Tray, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import path from 'node:path'
 import { existsSync, mkdirSync, promises as fs, readdirSync, statSync, unlinkSync } from 'node:fs'
@@ -6,15 +6,24 @@ import { AiProviderRegistry } from './ai-provider'
 import { wordsToCsv } from './data-export'
 import { AppDatabase, normalizeDailyNewLimit, type SecretCodec } from './database'
 import { DeepSeekProvider } from './deepseek'
+import { hardenUserDataDirectory } from './data-protection.ts'
+import { LocalAiService } from './local-ai.ts'
+import { LocalAiProvider } from './local-provider.ts'
 import { QueueProcessor } from './queue-processor'
 import { RootIndexer } from './root-indexer'
+import { developmentRendererUrl, shouldKeepRunningAfterMainClose } from './app-lifecycle.ts'
+import { clipboardEntryText, parseEntryBatchText, type WordBatchResult } from '../shared/entry.ts'
 import type { AppSettings, AppSettingsView, ExportFormat, ReviewRating, WordDraft, WordFilters } from '../shared/types'
 
 let windowRef: BrowserWindow | null = null
+let quickCaptureRef: BrowserWindow | null = null
+let trayRef: Tray | null = null
+let quitting = false
 let database: AppDatabase
 let rootIndexer: RootIndexer
 let processor: QueueProcessor
 let providers: AiProviderRegistry
+let localAi!: LocalAiService
 let backupTimer: NodeJS.Timeout | null = null
 
 const notifyChanged = (): void => windowRef?.webContents.send('words:changed')
@@ -33,7 +42,7 @@ const secretCodec: SecretCodec = {
   }
 }
 const toSettingsView = (settings: AppSettings): AppSettingsView => ({
-  aiProvider: 'deepseek',
+  aiProvider: settings.aiProvider,
   deepseekApiUrl: settings.deepseekApiUrl,
   deepseekModel: settings.deepseekModel,
   deepseekApiKey: '',
@@ -45,7 +54,7 @@ const toSettingsView = (settings: AppSettings): AppSettingsView => ({
 const mergeSettingsView = (view: AppSettingsView): AppSettings => {
   const current = database.getSettings()
   return {
-    aiProvider: 'deepseek',
+    aiProvider: view.aiProvider === 'local' || view.aiProvider === 'deepseek-first' || view.aiProvider === 'deepseek' || view.aiProvider === 'auto' ? view.aiProvider : 'auto',
     deepseekApiUrl: view.deepseekApiUrl.trim(),
     deepseekModel: view.deepseekModel.trim() || 'deepseek-v4-flash',
     deepseekApiKey: view.clearDeepseekApiKey ? '' : view.deepseekApiKey.trim() || current.deepseekApiKey,
@@ -91,6 +100,118 @@ function scheduleRootRefresh(wordId: string): void {
   })
 }
 
+function addEntryBatch(text: string, sourceName = ''): WordBatchResult {
+  const parsed = parseEntryBatchText(text, sourceName)
+  const rejected = [...parsed.rejected]
+  const createdIds: string[] = []
+  let added = 0
+  let duplicates = 0
+
+  parsed.entries.forEach((input) => {
+    try {
+      const result = database.createWord(input)
+      if (result.duplicate) duplicates += 1
+      else {
+        added += 1
+        createdIds.push(result.entry.id)
+      }
+    } catch (error) {
+      rejected.push({ input, reason: error instanceof Error ? error.message : '添加词条失败。' })
+    }
+  })
+
+  if (createdIds.length) {
+    notifyChanged()
+    createdIds.forEach(scheduleRootRefresh)
+    void processor.processNext()
+  }
+  return { total: parsed.entries.length + parsed.rejected.length, added, duplicates, rejected }
+}
+
+function presentQuickCapture(): void {
+  const target = quickCaptureRef
+  if (!target) return
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const bounds = target.getBounds()
+  target.setPosition(
+    Math.round(display.workArea.x + (display.workArea.width - bounds.width) / 2),
+    Math.round(display.workArea.y + Math.max(24, display.workArea.height * 0.2))
+  )
+  target.webContents.send('quick-capture:prefill', clipboardEntryText(clipboard.readText()))
+  target.show()
+  target.focus()
+}
+
+function showQuickCapture(): void {
+  if (quickCaptureRef) {
+    presentQuickCapture()
+    return
+  }
+
+  quickCaptureRef = new BrowserWindow({
+    width: 520,
+    height: 260,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    frame: false,
+    show: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    backgroundColor: '#f2f2f2',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  })
+  restrictRendererNavigation(quickCaptureRef)
+  quickCaptureRef.on('closed', () => {
+    quickCaptureRef = null
+  })
+  quickCaptureRef.once('ready-to-show', presentQuickCapture)
+
+  const rendererUrl = developmentRendererUrl({ candidate: process.env.ELECTRON_RENDERER_URL, isPackaged: app.isPackaged })
+  if (rendererUrl) {
+    const url = new URL(rendererUrl)
+    url.searchParams.set('view', 'quick-capture')
+    void quickCaptureRef.loadURL(url.toString())
+  } else {
+    void quickCaptureRef.loadFile(path.join(__dirname, '../renderer/index.html'), { query: { view: 'quick-capture' } })
+  }
+}
+
+function showMainWindow(): void {
+  if (!windowRef) createWindow()
+  if (!windowRef) return
+  if (windowRef.isMinimized()) windowRef.restore()
+  windowRef.show()
+  windowRef.focus()
+}
+
+function setupTray(): void {
+  if (trayRef) return
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(app.getAppPath(), 'build', 'icon.ico')
+  trayRef = new Tray(iconPath)
+  trayRef.setToolTip('生词本')
+  trayRef.setContextMenu(Menu.buildFromTemplate([
+    { label: '快速收词', click: showQuickCapture },
+    { label: '打开生词本', click: showMainWindow },
+    { type: 'separator' },
+    { label: '退出', click: () => { quitting = true; app.quit() } }
+  ]))
+  trayRef.on('click', showMainWindow)
+}
+
+function restrictRendererNavigation(target: BrowserWindow): void {
+  target.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  target.webContents.on('will-navigate', (event) => event.preventDefault())
+}
+
 function createWindow(): void {
   windowRef = new BrowserWindow({
     width: 1360,
@@ -109,14 +230,23 @@ function createWindow(): void {
     }
   })
 
+  windowRef.on('close', (event) => {
+    if (!shouldKeepRunningAfterMainClose({ platform: process.platform, quitting })) return
+    event.preventDefault()
+    windowRef?.hide()
+  })
   windowRef.on('closed', () => {
     windowRef = null
+    quickCaptureRef?.destroy()
+    quickCaptureRef = null
   })
   windowRef.on('maximize', () => windowRef?.webContents.send('window:maximized-changed', true))
   windowRef.on('unmaximize', () => windowRef?.webContents.send('window:maximized-changed', false))
+  restrictRendererNavigation(windowRef)
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void windowRef.loadURL(process.env.ELECTRON_RENDERER_URL)
+  const rendererUrl = developmentRendererUrl({ candidate: process.env.ELECTRON_RENDERER_URL, isPackaged: app.isPackaged })
+  if (rendererUrl) {
+    void windowRef.loadURL(rendererUrl)
   } else {
     void windowRef.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
@@ -160,6 +290,8 @@ function setupIpc(): void {
     else target.maximize()
   })
   ipcMain.on('window:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close())
+  ipcMain.handle('quick-capture:submit', (_event, text: string, sourceName?: string) => addEntryBatch(text, sourceName))
+  ipcMain.on('quick-capture:hide', (event) => BrowserWindow.fromWebContents(event.sender)?.hide())
   ipcMain.handle('words:list', (_event, filters: WordFilters) => database.listWords(filters))
   ipcMain.handle('words:get', (_event, id: string) => database.getWord(id))
   ipcMain.handle('words:get-by-normalized', (_event, word: string) => database.getWordByNormalized(word))
@@ -218,6 +350,7 @@ function setupIpc(): void {
     void processor.processNext()
     return toSettingsView(saved)
   })
+  ipcMain.handle('local-ai:status', () => localAi.status())
   ipcMain.handle('deepseek:check', (_event, view: AppSettingsView) => {
     return providers.get('deepseek').check(mergeSettingsView(view))
   })
@@ -285,9 +418,8 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (!windowRef) return
-    if (windowRef.isMinimized()) windowRef.restore()
-    windowRef.focus()
+    if (!app.isReady()) return
+    showMainWindow()
   })
 }
 
@@ -295,17 +427,36 @@ app.whenReady().then(async () => {
   if (!app.hasSingleInstanceLock()) return
   app.setName('生词本')
   Menu.setApplicationMenu(null)
-  database = new AppDatabase(app.getPath('userData'), secretCodec)
+  const userDataDirectory = app.getPath('userData')
+  const dataProtection = hardenUserDataDirectory(userDataDirectory)
+  if (process.platform === 'win32' && !dataProtection.applied) console.warn(dataProtection.message)
+  database = new AppDatabase(userDataDirectory, secretCodec)
   rootIndexer = new RootIndexer(database.directory)
-  providers = new AiProviderRegistry([new DeepSeekProvider()])
+  localAi = new LocalAiService({
+    resourceContext: {
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged
+    }
+  })
+  providers = new AiProviderRegistry([new LocalAiProvider(localAi), new DeepSeekProvider()])
+  void localAi.start().catch((error: unknown) => {
+    console.error('本地 AI 启动失败：', error)
+  })
   processor = new QueueProcessor(
     database,
     providers,
     notifyChanged,
-    (word, morphemes) => rootIndexer.reconcile(word, morphemes, database.getSettings().dictionaryPath)
+    (word, morphemes) => morphemes.length
+      ? rootIndexer.reconcile(word, morphemes, database.getSettings().dictionaryPath)
+      : rootIndexer.match(word, database.getSettings().dictionaryPath)
   )
   setupIpc()
   createWindow()
+  setupTray()
+  if (!globalShortcut.register('CommandOrControl+Shift+Alt+W', showQuickCapture)) {
+    console.error('全局快捷键 Ctrl+Shift+Alt+W 注册失败，可能已被其他应用占用。')
+  }
   processor.start()
   void refreshAllRootMatches().catch((error: unknown) => {
     console.error('词根索引初始化失败：', error)
@@ -329,7 +480,7 @@ app.whenReady().then(async () => {
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    showMainWindow()
   })
 })
 
@@ -338,6 +489,11 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  quitting = true
+  globalShortcut.unregisterAll()
+  trayRef?.destroy()
+  trayRef = null
+  localAi?.stop()
   processor?.stop()
   stopBackupSchedule()
 })

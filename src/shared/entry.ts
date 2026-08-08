@@ -1,6 +1,24 @@
 import type { EntryType, PhraseComponent } from './types'
 
 export const MAX_ENTRY_TOKENS = 8
+export const MAX_BATCH_ENTRIES = 5000
+
+export interface WordBatchRejection {
+  input: string
+  reason: string
+}
+
+export interface WordBatchResult {
+  total: number
+  added: number
+  duplicates: number
+  rejected: WordBatchRejection[]
+}
+
+export interface ParsedEntryBatch {
+  entries: string[]
+  rejected: WordBatchRejection[]
+}
 export const COMMON_FUNCTION_WORDS = new Set([
   'the', 'a', 'an', 'of', 'to', 'in', 'on', 'at', 'and', 'or', 'but', 'for', 'with'
 ])
@@ -52,4 +70,120 @@ export const validatePhraseComponents = (phrase: string, components: PhraseCompo
   return result
 }
 
+export const filterPhraseComponents = (phrase: string, components: PhraseComponent[]): PhraseComponent[] => {
+  const tokens = new Map(entryTokens(phrase).map((token) => [token.toLocaleLowerCase('en-US'), token]))
+  const seen = new Set<string>()
+  return components.flatMap((component) => {
+    const text = component.text.trim()
+    const matchedToken = tokens.get(text.toLocaleLowerCase('en-US'))
+    const meaningZh = component.meaningZh.trim()
+    const key = matchedToken?.toLocaleLowerCase('en-US')
+    if (!matchedToken || !meaningZh || !key || seen.has(key)) return []
+    seen.add(key)
+    return [{ text: matchedToken, meaningZh }]
+  })
+}
+
 export const isEntryToken = (value: string): boolean => ENTRY_TOKEN_PATTERN.test(value)
+
+const IMPORT_HEADER_NAMES = new Set(['word', 'words', 'vocabulary', 'term', 'expression', 'front', '英文', '单词', '词汇'])
+
+const decodeImportCell = (value: string): string => value
+  .replace(/^\uFEFF/, '')
+  .replace(/\{\{c\d+::(.*?)(?:::[^{}]*)?\}\}/gi, '$1')
+  .replace(/<br\s*\/?>/gi, ' ')
+  .replace(/<[^>]+>/g, '')
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&amp;/gi, '&')
+  .replace(/&#39;|&apos;/gi, "'")
+  .replace(/&quot;/gi, '"')
+  .trim()
+  .replace(/^(["'])(.*)\1$/, '$2')
+  .replace(/\s+/g, ' ')
+
+const importDelimiter = (text: string, sourceName: string): string | null => {
+  const directive = text.match(/^#separator:(.+)$/im)?.[1]?.trim().toLocaleLowerCase('en-US')
+  if (directive === 'tab' || directive === '\\t') return '\t'
+  if (directive === 'semicolon') return ';'
+  if (directive === 'comma') return ','
+  const extension = sourceName.toLocaleLowerCase('en-US')
+  if (extension.endsWith('.tsv')) return '\t'
+  if (extension.endsWith('.csv')) return ','
+  if (text.includes('\t')) return '\t'
+  return null
+}
+
+const parseDelimitedRows = (text: string, delimiter: string): string[][] => {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let quoted = false
+  const normalized = text.replace(/\r\n?/g, '\n')
+
+  for (let index = 0; index < normalized.length; index += 1) {
+    const character = normalized[index]
+    if (character === '"') {
+      if (quoted && normalized[index + 1] === '"') {
+        cell += '"'
+        index += 1
+      } else {
+        quoted = !quoted
+      }
+    } else if (character === delimiter && !quoted) {
+      row.push(cell)
+      cell = ''
+    } else if (character === '\n' && !quoted) {
+      row.push(cell)
+      rows.push(row)
+      row = []
+      cell = ''
+    } else {
+      cell += character
+    }
+  }
+  if (cell || row.length) {
+    row.push(cell)
+    rows.push(row)
+  }
+  return rows
+}
+
+export const parseEntryBatchText = (text: string, sourceName = ''): ParsedEntryBatch => {
+  const delimiter = importDelimiter(text, sourceName)
+  const rows = delimiter
+    ? parseDelimitedRows(text, delimiter)
+    : text.replace(/\r\n?/g, '\n').split('\n').map((line) => [line])
+  const meaningfulRows = rows.filter((row) => {
+    const joined = row.join('').trim()
+    return joined && !joined.startsWith('#')
+  })
+  const firstCells = meaningfulRows[0]?.map(decodeImportCell) ?? []
+  const headerIndex = firstCells.findIndex((cell) => IMPORT_HEADER_NAMES.has(cell.toLocaleLowerCase('en-US')))
+  const entries: string[] = []
+  const rejected: WordBatchRejection[] = []
+
+  meaningfulRows.forEach((row, rowIndex) => {
+    if (rowIndex === 0 && headerIndex >= 0) return
+    const cells = row.map(decodeImportCell).filter(Boolean)
+    if (!cells.length) return
+    const candidate = headerIndex >= 0
+      ? decodeImportCell(row[headerIndex] ?? '')
+      : cells.find((cell) => entryInputError(cell) === null) ?? cells[0]
+    if (entries.length >= MAX_BATCH_ENTRIES) {
+      rejected.push({ input: candidate, reason: `单次最多导入 ${MAX_BATCH_ENTRIES} 个词条。` })
+      return
+    }
+    const error = entryInputError(candidate)
+    if (error) rejected.push({ input: candidate, reason: error })
+    else entries.push(normalizeEntryWhitespace(candidate))
+  })
+
+  return { entries, rejected }
+}
+
+export const clipboardEntryText = (text: string): string => {
+  if (!text.trim() || text.length > 20_000) return ''
+  const lines = text.replace(/\r\n?/g, '\n').split('\n').map(decodeImportCell).filter(Boolean)
+  if (!lines.length || lines.length > 100 || lines.some((line) => entryInputError(line))) return ''
+  return lines.map(normalizeEntryWhitespace).join('\n')
+}

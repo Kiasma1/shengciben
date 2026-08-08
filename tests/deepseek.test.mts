@@ -75,7 +75,9 @@ test('DeepSeek enrichment requests JSON output and parses the vocabulary fields'
   assert.equal(requestBody.max_tokens, 8000)
   assert.deepEqual(requestBody.thinking, { type: 'disabled' })
   assert.deepEqual(enrichment, {
+    source: 'deepseek',
     entryType: 'word',
+    usageNote: '',
     ipaUk: 'kənˈvɜːʃən',
     senses: [{ partOfSpeech: 'noun', definitionZh: '转换；转化' }],
     suggestedCategory: '学术写作',

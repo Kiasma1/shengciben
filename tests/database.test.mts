@@ -19,6 +19,12 @@ const createDatabase = () => {
   }
 }
 
+test('new installations default to automatic split enrichment', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  assert.equal(fixture.database.getSettings().aiProvider, 'auto')
+})
+
 test('createWord 把复数规范为单数并与已有单数去重', (context) => {
   const fixture = createDatabase()
   context.after(fixture.cleanup)
@@ -149,6 +155,63 @@ test('AI enrichment is trusted immediately and creates its suggested category', 
   assert.equal(enriched?.categoryName, '学术写作')
   assert.deepEqual(enriched?.senses.map((sense) => sense.definitionZh), ['词汇'])
   assert.deepEqual(enriched?.tags.map((tag) => tag.name), ['考试'])
+})
+
+test('Local source is usable and DeepSeek can enhance it without replacing manual senses', (context) => {
+  const fixture = createDatabase()
+  context.after(fixture.cleanup)
+  const created = fixture.database.createWord('elusive')
+  fixture.database.applyEnrichment(created.entry.id, {
+    source: 'local',
+    entryType: 'word',
+    usageNote: '常用于描述难以捕捉的事物。',
+    ipaUk: '',
+    senses: [{ partOfSpeech: 'adj.', definitionZh: '难以捉摸的' }],
+    suggestedCategory: null,
+    tagNames: [],
+    morphemes: [],
+    formationSummary: '',
+    phraseType: '',
+    phraseComponents: [],
+    phraseExplanation: ''
+  })
+  assert.equal(fixture.database.getWord(created.entry.id)?.enrichmentSource, 'local')
+  assert.equal(fixture.database.getWord(created.entry.id)?.usageNote, '常用于描述难以捕捉的事物。')
+
+  fixture.database.applyEnrichment(created.entry.id, {
+    source: 'deepseek',
+    entryType: 'word',
+    usageNote: '高级用法说明',
+    ipaUk: 'ɪˈluːsɪv',
+    senses: [{ partOfSpeech: 'adj.', definitionZh: '难以找到的；难以捉摸的' }],
+    suggestedCategory: null,
+    tagNames: ['高级'],
+    morphemes: [],
+    formationSummary: '',
+    phraseType: '',
+    phraseComponents: [],
+    phraseExplanation: ''
+  })
+  assert.equal(fixture.database.getWord(created.entry.id)?.senses[0]?.definitionZh, '难以找到的；难以捉摸的')
+
+  fixture.database.saveWord({ id: created.entry.id, word: created.entry.word, ipaUk: '人工 IPA', senses: [{ partOfSpeech: 'adj.', definitionZh: '人工释义' }], categoryId: created.entry.categoryId, tagNames: ['人工'] })
+  fixture.database.applyEnrichment(created.entry.id, {
+    source: 'deepseek',
+    entryType: 'word',
+    usageNote: '',
+    ipaUk: '新的 IPA',
+    senses: [{ partOfSpeech: 'adj.', definitionZh: '不应覆盖' }],
+    suggestedCategory: null,
+    tagNames: ['不应覆盖'],
+    morphemes: [],
+    formationSummary: '',
+    phraseType: '',
+    phraseComponents: [],
+    phraseExplanation: ''
+  })
+  const manual = fixture.database.getWord(created.entry.id)
+  assert.equal(manual?.senses[0]?.definitionZh, '人工释义')
+  assert.deepEqual(manual?.tags.map((tag) => tag.name), ['人工'])
 })
 
 test('AI enrichment persists reusable morphemes and the formation summary', (context) => {
@@ -343,13 +406,14 @@ test('legacy review records become ready when the database reopens', (context) =
   assert.equal(migrated?.categoryName, 'AI 分类')
 })
 
-test('legacy Ollama settings migrate to DeepSeek defaults', (context) => {
+test('legacy Ollama settings migrate to automatic split enrichment', (context) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-deepseek-migration-'))
   const first = new AppDatabase(directory)
   first.close()
 
   const raw = new Database(path.join(directory, 'shengciben.sqlite'))
   raw.prepare(`UPDATE settings SET value = 'ollama' WHERE key = 'aiProvider'`).run()
+  raw.prepare(`DELETE FROM settings WHERE key = '_aiProviderRoutingV1'`).run()
   raw.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('ollamaUrl', 'http://127.0.0.1:11434')`).run()
   raw.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('ollamaModel', 'legacy-model')`).run()
   raw.prepare(`DELETE FROM settings WHERE key IN ('deepseekApiUrl', 'deepseekModel', 'deepseekApiKey')`).run()
@@ -362,13 +426,36 @@ test('legacy Ollama settings migrate to DeepSeek defaults', (context) => {
   })
 
   assert.deepEqual(reopened.getSettings(), {
-    aiProvider: 'deepseek',
+    aiProvider: 'auto',
     deepseekApiUrl: 'https://api.deepseek.com',
     deepseekModel: 'deepseek-v4-flash',
     deepseekApiKey: '',
     dictionaryPath: '',
     dailyNewLimit: 20
   })
+})
+
+test('legacy DeepSeek-only defaults migrate once to automatic split enrichment', (context) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-auto-routing-migration-'))
+  const first = new AppDatabase(directory)
+  first.close()
+
+  const raw = new Database(path.join(directory, 'shengciben.sqlite'))
+  raw.prepare(`UPDATE settings SET value = 'deepseek' WHERE key = 'aiProvider'`).run()
+  raw.prepare(`DELETE FROM settings WHERE key = '_aiProviderRoutingV1'`).run()
+  raw.close()
+
+  const migrated = new AppDatabase(directory)
+  assert.equal(migrated.getSettings().aiProvider, 'auto')
+  migrated.saveSettings({ ...migrated.getSettings(), aiProvider: 'deepseek' })
+  migrated.close()
+
+  const reopened = new AppDatabase(directory)
+  context.after(() => {
+    reopened.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
+  assert.equal(reopened.getSettings().aiProvider, 'deepseek')
 })
 
 test('DeepSeek API key is encoded at rest and decoded through settings', (context) => {

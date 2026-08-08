@@ -5,7 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 import Database from 'better-sqlite3'
 import { AppDatabase } from '../src/main/database.ts'
-import { COMMON_FUNCTION_WORDS } from '../src/shared/entry.ts'
+import { clipboardEntryText, COMMON_FUNCTION_WORDS, parseEntryBatchText } from '../src/shared/entry.ts'
 
 const createDatabase = () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'shengciben-phrase-'))
@@ -72,6 +72,33 @@ test('createWord rejects invalid phrase inputs', (context) => {
   assert.throws(() => fixture.database.createWord('one two three four five six seven eight nine'), /最多 8 个词/)
   assert.throws(() => fixture.database.createWord('中文输入'), /只允许/)
   assert.throws(() => fixture.database.createWord('look up!'), /只允许/)
+})
+
+test('quick capture recognizes clipboard words and newline batches without importing prose', () => {
+  assert.equal(clipboardEntryText('  serendipity  '), 'serendipity')
+  assert.equal(clipboardEntryText('apple\narchitecture\nout of the blue'), 'apple\narchitecture\nout of the blue')
+  assert.equal(clipboardEntryText('This sentence contains punctuation.'), '')
+
+  const parsed = parseEntryBatchText('apple\narchitecture\n中文输入\nkeep an eye on')
+  assert.deepEqual(parsed.entries, ['apple', 'architecture', 'keep an eye on'])
+  assert.equal(parsed.rejected.length, 1)
+  assert.equal(parsed.rejected[0]?.input, '中文输入')
+})
+
+test('quick capture rejects punctuation instead of silently treating one line as CSV', () => {
+  const parsed = parseEntryBatchText('look up, please')
+  assert.deepEqual(parsed.entries, [])
+  assert.deepEqual(parsed.rejected, [{ input: 'look up, please', reason: '只允许英文字母、空格、连字符和撇号。' }])
+})
+
+test('CSV and Anki text imports select the word field and decode exported cards', () => {
+  const csv = parseEntryBatchText('Word,Definition\nserendipity,意外发现美好事物的能力\n"out of the blue","突然地，出乎意料"', 'words.csv')
+  assert.deepEqual(csv.entries, ['serendipity', 'out of the blue'])
+  assert.deepEqual(csv.rejected, [])
+
+  const anki = parseEntryBatchText('#separator:tab\n#html:true\nFront\tBack\n<div>architecture</div>\t建筑\n{{c1::keep an eye on::idiom}}\t留意', 'anki.txt')
+  assert.deepEqual(anki.entries, ['architecture', 'keep an eye on'])
+  assert.deepEqual(anki.rejected, [])
 })
 
 test('phrase enrichment persists whole-expression analysis and search fields', (context) => {
@@ -153,6 +180,8 @@ test('v2.1 words migrate to entry_type word without losing review or roots and m
   const migrated = new AppDatabase(directory)
   const restored = migrated.getWord(word.id)
   assert.equal(restored?.entryType, 'word')
+  assert.equal(restored?.enrichmentSource, 'manual')
+  assert.equal(restored?.usageNote, '')
   assert.equal(restored?.reviewCount, 1)
   assert.equal(restored?.rootMatches[0]?.root, 'leg')
   migrated.close()

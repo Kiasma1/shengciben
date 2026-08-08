@@ -3,9 +3,34 @@ out/
 dist/
 release/
 .electron-vite/
+coverage/
+*.tsbuildinfo
 *.log
 
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
+*.keystore
+
+# User vocabulary data and backups
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+/backups/
+
+# Downloaded Local AI binaries and model weights
+*.gguf
+llama-server.exe
+
 # Local working artifacts
+/build/.local-ai-cache/
+/build/local-ai/
 /.codegraph/
 /BLOCKED.md
 /PROGRESS.md
@@ -13,3 +38,9 @@ release/
 /before-v2-overflow.html
 /latin-first-4-weeks.md
 /plans/
+
+# Editor and operating-system metadata
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db

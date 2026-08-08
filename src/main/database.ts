@@ -8,6 +8,7 @@ import type {
   AiMorpheme,
   Category,
   EnrichmentStatus,
+  EnrichmentSource,
   EntryType,
   QueueStatus,
   RootMatch,
@@ -24,13 +25,13 @@ import type {
   WordSense,
   PhraseComponent
 } from '../shared/types'
-import { entryInputError, entryTypeFor, normalizeEntryWhitespace, validatePhraseComponents } from '../shared/entry.ts'
+import { entryInputError, entryTypeFor, filterPhraseComponents, normalizeEntryWhitespace, validatePhraseComponents } from '../shared/entry.ts'
 import pluralize from 'pluralize'
 
 const UNCATEGORIZED_ID = 'uncategorized'
 const MORPHOLOGY_VERSION = 1
 const DEFAULT_SETTINGS: AppSettings = {
-  aiProvider: 'deepseek',
+  aiProvider: 'auto',
   deepseekApiUrl: 'https://api.deepseek.com',
   deepseekModel: 'deepseek-v4-flash',
   deepseekApiKey: '',
@@ -56,6 +57,8 @@ type WordRow = {
   phrase_type: string
   phrase_components_json: string
   phrase_explanation: string
+  usage_note: string
+  enrichment_source: EnrichmentSource
   ipa_uk: string
   category_id: string
   category_name: string
@@ -243,7 +246,10 @@ export class AppDatabase {
         phrase_type TEXT NOT NULL DEFAULT '',
         phrase_components_json TEXT NOT NULL DEFAULT '[]',
         phrase_explanation TEXT NOT NULL DEFAULT '',
-        ipa_uk TEXT NOT NULL DEFAULT '',
+	        usage_note TEXT NOT NULL DEFAULT '',
+	        enrichment_source TEXT NOT NULL DEFAULT 'manual' CHECK (enrichment_source IN ('manual', 'local', 'deepseek')),
+	        learning_fields_manual INTEGER NOT NULL DEFAULT 0,
+	        ipa_uk TEXT NOT NULL DEFAULT '',
         category_id TEXT NOT NULL REFERENCES categories(id),
         enrichment_status TEXT NOT NULL DEFAULT 'pending',
         ai_error TEXT,
@@ -354,7 +360,27 @@ export class AppDatabase {
     if (!reviewColumns.some((column) => column.name === 'phrase_explanation')) {
       this.db.exec(`ALTER TABLE words ADD COLUMN phrase_explanation TEXT NOT NULL DEFAULT ''`)
     }
-    this.db.prepare(`UPDATE words SET entry_type = 'word' WHERE entry_type IS NULL OR entry_type NOT IN ('word', 'phrase')`).run()
+    if (!reviewColumns.some((column) => column.name === 'usage_note')) {
+      this.db.exec(`ALTER TABLE words ADD COLUMN usage_note TEXT NOT NULL DEFAULT ''`)
+    }
+	    if (!reviewColumns.some((column) => column.name === 'enrichment_source')) {
+	      this.db.exec(`ALTER TABLE words ADD COLUMN enrichment_source TEXT NOT NULL DEFAULT 'manual'`)
+	    }
+	    const needsManualLearningFieldsBackfill = !reviewColumns.some((column) => column.name === 'learning_fields_manual')
+	    if (needsManualLearningFieldsBackfill) {
+	      this.db.exec(`ALTER TABLE words ADD COLUMN learning_fields_manual INTEGER NOT NULL DEFAULT 0`)
+	    }
+	    this.db.prepare(`UPDATE words SET entry_type = 'word' WHERE entry_type IS NULL OR entry_type NOT IN ('word', 'phrase')`).run()
+	    this.db.prepare(`UPDATE words SET enrichment_source = 'manual' WHERE enrichment_source IS NULL OR enrichment_source NOT IN ('manual', 'local', 'deepseek')`).run()
+	    if (needsManualLearningFieldsBackfill) {
+	      this.db.prepare(`
+	        UPDATE words SET learning_fields_manual = 1
+	        WHERE enrichment_source = 'manual' AND (
+	          EXISTS (SELECT 1 FROM senses WHERE senses.word_id = words.id) OR
+	          EXISTS (SELECT 1 FROM word_tags WHERE word_tags.word_id = words.id)
+	        )
+	      `).run()
+	    }
     if (!reviewColumns.some((column) => column.name === 'last_reviewed_at')) {
       this.db.exec(`ALTER TABLE words ADD COLUMN last_reviewed_at TEXT`)
     }
@@ -382,7 +408,11 @@ export class AppDatabase {
     }
 
     this.db.transaction(() => {
-      this.db.prepare(`UPDATE settings SET value = 'deepseek' WHERE key = 'aiProvider'`).run()
+      const routingMigration = this.db.prepare(`SELECT value FROM settings WHERE key = '_aiProviderRoutingV1'`).get()
+      if (!routingMigration) {
+        this.db.prepare(`UPDATE settings SET value = 'auto' WHERE key = 'aiProvider' AND value IN ('deepseek', 'ollama')`).run()
+        this.db.prepare(`INSERT INTO settings (key, value) VALUES ('_aiProviderRoutingV1', 'done')`).run()
+      }
       this.db.prepare(`DELETE FROM settings WHERE key IN ('ollamaUrl', 'ollamaModel')`).run()
       this.db.prepare(`UPDATE tasks SET status = 'pending', error = NULL, updated_at = ? WHERE status = 'processing'`).run(now())
       this.db.prepare(`UPDATE words SET enrichment_status = 'pending', ai_error = NULL, updated_at = ? WHERE enrichment_status = 'processing'`).run(now())
@@ -566,12 +596,13 @@ export class AppDatabase {
     const update = this.db.transaction(() => {
       try {
         this.db
-          .prepare(`UPDATE words SET word = ?, normalized_word = ?, entry_type = ?, ipa_uk = ?, category_id = ?, enrichment_status = '${identityChanged ? 'pending' : 'ready'}', ai_error = NULL, ai_reviewed = ${identityChanged ? 0 : 1}, suggested_category = NULL, updated_at = ? WHERE id = ?`)
+	          .prepare(`UPDATE words SET word = ?, normalized_word = ?, entry_type = ?, ipa_uk = ?, usage_note = ?, enrichment_source = 'manual', learning_fields_manual = 1, category_id = ?, enrichment_status = '${identityChanged ? 'pending' : 'ready'}', ai_error = NULL, ai_reviewed = ${identityChanged ? 0 : 1}, suggested_category = NULL, updated_at = ? WHERE id = ?`)
           .run(
             word,
             normalizedWord,
             entryType,
             draft.ipaUk.trim(),
+            identityChanged ? '' : current.usageNote,
             draft.categoryId,
             now(),
             draft.id
@@ -822,12 +853,20 @@ export class AppDatabase {
           this.db.prepare('SELECT id FROM categories WHERE name = ? COLLATE NOCASE').get(categoryName) as { id: string }
         ).id
       }
+	      const source = result.source ?? 'deepseek'
+	      const ownership = this.db.prepare('SELECT learning_fields_manual AS manual FROM words WHERE id = ?').get(wordId) as { manual: number }
       const phrase = current.entryType === 'phrase'
-      const phraseComponents = phrase ? validatePhraseComponents(current.word, result.phraseComponents ?? []) : []
+      const phraseComponents = phrase
+        ? source === 'local'
+          ? filterPhraseComponents(current.word, result.phraseComponents ?? [])
+          : validatePhraseComponents(current.word, result.phraseComponents ?? [])
+        : []
       this.db
-        .prepare(`UPDATE words SET ipa_uk = ?, category_id = ?, ai_morphemes_json = ?, formation_summary = ?, phrase_type = ?, phrase_components_json = ?, phrase_explanation = ?, morphology_version = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
+        .prepare(`UPDATE words SET ipa_uk = ?, usage_note = ?, enrichment_source = ?, category_id = ?, ai_morphemes_json = ?, formation_summary = ?, phrase_type = ?, phrase_components_json = ?, phrase_explanation = ?, morphology_version = ?, enrichment_status = 'ready', ai_error = NULL, ai_reviewed = 1, suggested_category = NULL, updated_at = ? WHERE id = ?`)
         .run(
-          result.ipaUk?.trim() ?? '',
+          result.ipaUk?.trim() || current.ipaUk,
+          phrase ? '' : result.usageNote?.trim() ?? '',
+          source,
           categoryId,
           JSON.stringify(phrase ? [] : result.morphemes ?? []),
           phrase ? '' : result.formationSummary?.trim() ?? '',
@@ -838,11 +877,11 @@ export class AppDatabase {
           now(),
           wordId
         )
-      // 已有义项说明内容来自人工编辑或上一轮 AI，重新分析只更新分析字段，
-      // 不覆盖释义与标签，避免丢失用户数据。
-      if (!current.senses.length) {
-        this.replaceSenses(wordId, result.senses)
-        this.replaceTags(wordId, result.tagNames)
+	      // Local 结果可以被后续 DeepSeek 增强；人工编辑的释义/标签在完整重分析链中始终保持不动。
+	      const replaceLearningFields = !ownership.manual && (!current.senses.length || (current.enrichmentSource === 'local' && source === 'deepseek'))
+      if (replaceLearningFields) {
+        this.replaceSenses(wordId, result.senses ?? [])
+        this.replaceTags(wordId, result.tagNames ?? [])
       }
     })
     transaction()
@@ -946,6 +985,8 @@ export class AppDatabase {
       phraseType: row.phrase_type ?? '',
       phraseComponents,
       phraseExplanation: row.phrase_explanation ?? '',
+      enrichmentSource: row.enrichment_source === 'local' || row.enrichment_source === 'deepseek' ? row.enrichment_source : 'manual',
+      usageNote: row.usage_note ?? '',
       ipaUk: row.ipa_uk,
       senses,
       categoryId: row.category_id,

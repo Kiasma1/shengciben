@@ -5,6 +5,7 @@ import type {
   Category,
   DeepSeekStatus,
   ExportFormat,
+  LocalAiStatus,
   QueueStatus,
   ReviewGradeResult,
   ReviewOverview,
@@ -17,6 +18,7 @@ import type {
   WordEntry,
   WordFilters
 } from '../../shared/types'
+import type { WordBatchResult } from '../../shared/entry'
 
 declare global {
   interface Window {
@@ -34,6 +36,11 @@ declare global {
         toggleMaximize: () => void
         close: () => void
         onMaximizedChanged: (listener: (maximized: boolean) => void) => () => void
+      }
+      quickCapture: {
+        submit: (text: string, sourceName?: string) => Promise<WordBatchResult>
+        hide: () => void
+        onPrefill: (listener: (text: string) => void) => () => void
       }
       words: {
         list: (filters: WordFilters) => Promise<WordEntry[]>
@@ -60,7 +67,10 @@ declare global {
         get: () => Promise<AppSettingsView>
         save: (settings: AppSettingsView) => Promise<AppSettingsView>
       }
-      deepseek: { check: (settings: AppSettingsView) => Promise<DeepSeekStatus> }
+      localAi: {
+        status: () => Promise<LocalAiStatus>
+      },
+      deepseek: { check: (settings: AppSettingsView) => Promise<DeepSeekStatus> },
       queue: {
         status: () => Promise<QueueStatus>
         setPaused: (paused: boolean) => Promise<QueueStatus>

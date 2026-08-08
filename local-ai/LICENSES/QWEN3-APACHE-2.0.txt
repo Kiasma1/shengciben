@@ -1,0 +1,9 @@
+Qwen3-0.6B model notice
+
+Copyright 2024 Alibaba Cloud
+
+Licensed under the Apache License, Version 2.0. The complete license text is
+bundled beside this notice as APACHE-2.0.txt.
+
+Pinned upstream license:
+https://huggingface.co/Qwen/Qwen3-0.6B/raw/main/LICENSE

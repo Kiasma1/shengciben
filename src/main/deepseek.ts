@@ -28,7 +28,8 @@ const commonEnrichmentShape = {
   ipaUk: z.string().max(80),
   senses: z.array(z.object({ partOfSpeech: z.string().min(1).max(40), definitionZh: z.string().min(1).max(160) })).min(1).max(6),
   suggestedCategory: z.string().max(60).nullable(),
-  suggestedTags: z.array(z.string().min(1).max(30)).max(6)
+  suggestedTags: z.array(z.string().min(1).max(30)).max(6),
+  usageNote: z.string().max(240).optional().default('')
 }
 const wordEnrichmentSchema = z.object({
   ...commonEnrichmentShape,
@@ -124,7 +125,9 @@ export async function enrichWithDeepSeek(
     const parsed = phraseEnrichmentSchema.safeParse(JSON.parse(content))
     if (!parsed.success) throw new Error('DeepSeek 返回的短语字段不完整。')
     return {
+      source: 'deepseek',
       entryType: 'phrase',
+      usageNote: parsed.data.usageNote,
       ipaUk: parsed.data.ipaUk.trim(),
       senses: parsed.data.senses,
       suggestedCategory: parsed.data.suggestedCategory?.trim() || null,
@@ -139,7 +142,9 @@ export async function enrichWithDeepSeek(
   const parsed = wordEnrichmentSchema.safeParse(JSON.parse(content))
   if (!parsed.success) throw new Error('DeepSeek 返回的字段不完整。')
   return {
+    source: 'deepseek',
     entryType: 'word',
+    usageNote: parsed.data.usageNote,
     ipaUk: parsed.data.ipaUk,
     senses: parsed.data.senses,
     suggestedCategory: parsed.data.suggestedCategory?.trim() || null,

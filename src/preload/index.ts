@@ -24,6 +24,15 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener('window:maximized-changed', handler)
     }
   },
+  quickCapture: {
+    submit: (text: string, sourceName?: string) => ipcRenderer.invoke('quick-capture:submit', text, sourceName),
+    hide: () => ipcRenderer.send('quick-capture:hide'),
+    onPrefill: (listener: (text: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, text: string): void => listener(text)
+      ipcRenderer.on('quick-capture:prefill', handler)
+      return () => ipcRenderer.removeListener('quick-capture:prefill', handler)
+    }
+  },
   words: {
     list: (filters: WordFilters) => ipcRenderer.invoke('words:list', filters),
     get: (id: string) => ipcRenderer.invoke('words:get', id),
@@ -48,6 +57,9 @@ contextBridge.exposeInMainWorld('api', {
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
     save: (settings: AppSettingsView) => ipcRenderer.invoke('settings:save', settings)
+  },
+  localAi: {
+    status: () => ipcRenderer.invoke('local-ai:status')
   },
   deepseek: { check: (settings: AppSettingsView) => ipcRenderer.invoke('deepseek:check', settings) },
   queue: {
