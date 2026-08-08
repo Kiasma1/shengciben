@@ -30,14 +30,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Require Windows signing certificate
+      - name: Detect Windows signing certificate
+        id: signing
         shell: pwsh
         env:
           CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:CSC_LINK)) { throw 'Missing WINDOWS_CERTIFICATE_BASE64 secret.' }
-          if ([string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)) { throw 'Missing WINDOWS_CERTIFICATE_PASSWORD secret.' }
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:CSC_LINK) -and -not [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "enabled=$($hasCertificate.ToString().ToLowerInvariant())"
+          if ($hasCertificate) {
+            Write-Host 'Windows installer signing is enabled.'
+          } else {
+            Add-Content -Path $env:GITHUB_ENV -Value 'CSC_IDENTITY_AUTO_DISCOVERY=false'
+            Write-Host 'Windows installer signing is disabled; unsigned installer will be published.'
+          }
 
       - name: Package installer
         env:
@@ -46,12 +53,22 @@ jobs:
         run: npm run build:win -- --publish never
 
       - name: Verify installer signature
+        if: steps.signing.outputs.enabled == 'true'
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           $installer = "release/shengciben-setup-$version.exe"
           $signature = Get-AuthenticodeSignature -LiteralPath $installer
           if ($signature.Status -ne 'Valid') { throw "Installer signature is $($signature.Status), expected Valid." }
+
+      - name: Report unsigned installer
+        if: steps.signing.outputs.enabled != 'true'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $installer = "release/shengciben-setup-$version.exe"
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          Write-Host "Installer signature is $($signature.Status); publishing unsigned build by configuration."
 
       - name: Create or update release
         env:
@@ -60,5 +77,16 @@ jobs:
         run: |
           $tag = $env:GITHUB_REF_NAME
           $version = $tag.TrimStart('v')
-          gh release create "$tag" --title "生词本 $tag" --notes "自动发布" 2>$null
+          if ('${{ steps.signing.outputs.enabled }}' -eq 'true') {
+            $notes = '自动发布。Windows 安装包已签名。'
+          } else {
+            $notes = '自动发布。Windows 安装包未签名；安装时可能出现 SmartScreen 或未知发布者提示。'
+          }
+          gh release view "$tag" --json id 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit "$tag" --title "生词本 $tag" --notes "$notes"
+          } else {
+            gh release create "$tag" --title "生词本 $tag" --notes "$notes"
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Failed to create or update release $tag." }
           gh release upload "$tag" "release/shengciben-setup-$version.exe" "release/shengciben-setup-$version.exe.blockmap" "release/latest.yml" --clobber
