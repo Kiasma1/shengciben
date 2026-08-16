@@ -234,6 +234,7 @@ function WordbookApp(): ReactElement {
   const reviewGradingRef = useRef(false)
   const [reviewCounts, setReviewCounts] = useState<ReviewCounts>(EMPTY_REVIEW_COUNTS)
   const searchRef = useRef<HTMLInputElement>(null)
+  const wordListRef = useRef<HTMLDivElement>(null)
   const toastCloseTimerRef = useRef<number | null>(null)
   const toastUnmountTimerRef = useRef<number | null>(null)
   const debouncedQuery = useDebouncedValue(query, 180)
@@ -253,6 +254,7 @@ function WordbookApp(): ReactElement {
   )
 
   const selected = entries.find((entry) => entry.id === selectedId) ?? entries[0] ?? null
+  const selectedCategory = categories.find((category) => category.id === selectedCategoryId)
 
   const load = async (): Promise<void> => {
     try {
@@ -349,6 +351,21 @@ function WordbookApp(): ReactElement {
 
   const selectWord = (id: string): void => {
     setSelectedId(id)
+  }
+
+  const handleWordListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    if (!(event.target instanceof HTMLButtonElement) || !event.target.classList.contains('word-row')) return
+    const rows = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('.word-row')]
+    const currentIndex = rows.indexOf(event.target)
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? rows.length - 1
+        : Math.min(rows.length - 1, Math.max(0, currentIndex + (event.key === 'ArrowDown' ? 1 : -1)))
+    event.preventDefault()
+    rows[nextIndex]?.focus()
+    rows[nextIndex]?.click()
   }
 
   const openEntryByNormalized = async (word: string): Promise<void> => {
@@ -544,7 +561,8 @@ function WordbookApp(): ReactElement {
         <header className="list-header">
           <div className="word-search">
             <Search size={18} aria-hidden="true" />
-            <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索词汇、释义、标签或分析" aria-label="搜索词汇" aria-keyshortcuts="Control+K" />
+            <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'ArrowDown') { const firstRow = wordListRef.current?.querySelector<HTMLButtonElement>('.word-row'); if (firstRow) { event.preventDefault(); firstRow.focus(); firstRow.click() } } }} placeholder="搜索词汇、释义、标签或分析" aria-label="搜索词汇" aria-keyshortcuts="Control+K" />
+            {!query && <kbd className="search-shortcut" aria-hidden="true">Ctrl K</kbd>}
             {query && (
               <button className="icon-button" onClick={() => setQuery('')} aria-label="清除搜索">
                 <X size={16} />
@@ -559,18 +577,20 @@ function WordbookApp(): ReactElement {
               <option value="ready">已完成</option>
               <option value="failed">处理失败</option>
             </select>
-            <button className="text-button" onClick={() => setSort((value) => (value === 'recent' ? 'alphabetical' : value === 'alphabetical' ? 'due' : 'recent'))} aria-label={`当前按${sort === 'recent' ? '最近更新' : sort === 'alphabetical' ? '字母顺序' : '记忆曲线'}排列，点击切换`}>
-              {sort === 'recent' ? '最近更新' : sort === 'alphabetical' ? 'A–Z' : '记忆曲线'}
-            </button>
+            <select value={sort} onChange={(event) => setSort(event.target.value as 'recent' | 'alphabetical' | 'due')} aria-label="排序方式">
+              <option value="due">记忆曲线</option>
+              <option value="recent">最近更新</option>
+              <option value="alphabetical">字母顺序 A–Z</option>
+            </select>
           </div>
         </header>
 
-        <div className="list-summary">
-          <span>{collectionView === 'trash' ? '回收站' : selectedCategoryId ? '已筛选' : '全部词汇'}</span>
+        <div className="list-summary" aria-live="polite">
+          <span>{collectionView === 'trash' ? '回收站' : selectedCategory?.name ?? '全部词汇'}</span>
           <span>{entries.length} 个条目</span>
         </div>
 
-        <div className="word-list" aria-busy={isLoading}>
+        <div ref={wordListRef} className="word-list" aria-busy={isLoading} onKeyDown={handleWordListKeyDown}>
           {isLoading ? <ListLoading /> : entries.length ? entries.map((entry) => <WordRow key={entry.id} entry={entry} selected={entry.id === selected?.id} onClick={() => selectWord(entry.id)} />) : <ListEmpty view={collectionView} query={query} />}
         </div>
       </section>
@@ -602,7 +622,7 @@ function WordbookApp(): ReactElement {
                     {queueStatus.paused ? <Play size={14} /> : <Pause size={14} />}
                   </button>
                 </div>
-                <button className="primary-button" onClick={() => setAddOpen(true)} aria-keyshortcuts="Control+N">
+                <button className="primary-button" onClick={() => setAddOpen(true)} aria-keyshortcuts="Control+N" title="快捷键：Ctrl+N">
                   <Plus size={18} /> 添加词汇
                 </button>
               </>
@@ -1027,7 +1047,7 @@ function WordDetail({ entry, categories, isTrash, onChanged, onToast, onDirtyCha
   }
 
   return (
-    <article className="detail-card">
+    <article className="detail-card" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null) && dirty && !savingRef.current && !saveError && canAutosaveDraft(latestDraftRef.current)) void save(latestDraftRef.current, editVersionRef.current) }}>
       <div className="detail-status-line"><StatusBadge status={entry.status} /><span className="source-label">{entry.entryType === 'phrase' && entry.enrichmentSource === 'local' ? '本地基础解析 · 建议核对' : sourceCopy[entry.enrichmentSource]}</span>{entry.entryType === 'phrase' && <span className="entry-type-badge">短语</span>}<span className={`autosave-status${saveError ? ' error' : ''}`}>{saveError ? '自动保存失败' : saving ? '自动保存中…' : dirty ? (canAutosaveDraft(draft) ? '修改待保存' : '填写完整后自动保存') : '已自动保存'}</span></div>
       {entry.aiError && <div className="inline-alert"><CircleAlert size={17} /><span>{entry.aiError}</span><button onClick={() => void retry()}><RefreshCw size={14} />重试</button></div>}
 
@@ -1310,7 +1330,7 @@ function Dialog({ title, motionState, onClose, children, wide = false }: { title
       previousFocus?.focus()
     }
   }, [])
-  return <div className="dialog-backdrop" data-state={motionState} role="presentation"><section ref={dialogRef} className={`dialog ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}><header><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>{children}</section></div>
+  return <div className="dialog-backdrop" data-state={motionState} role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose() }}><section ref={dialogRef} className={`dialog ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}><header><h2 id={titleId}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button></header>{children}</section></div>
 }
 
 function ListLoading(): ReactElement { return <div className="list-loading"><LoaderCircle size={20} className="spin" />正在读取词库…</div> }
